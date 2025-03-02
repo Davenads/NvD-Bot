@@ -314,12 +314,12 @@ module.exports = {
       // CHANGED: Updated embed with NvD theme and no spec/element
       const resultEmbed = new EmbedBuilder()
         .setColor('#8A2BE2') // CHANGED: Updated color for NvD theme
-        .setTitle('⚔️ Challenge Result Announced! ⚔️')
+        .setTitle(':bone: ⚔️ Challenge Result Announced! ⚔️ :bear:')
         .setDescription(`**${winnerDetails.discordName}** ${victoryMessage}`)
         .addFields(
           {
             name: `${
-              isDefense ? '🛡️ Defender' : '🏆 Victor'
+              isDefense ? ':bone: 🛡️ Defender' : ':bone: 🏆 Victor'
             } (Rank #${winnerRank})`,
             value: `**${winnerDetails.discordName}**
 <@${winnerDiscordId}>`,
@@ -332,7 +332,7 @@ module.exports = {
           },
           {
             name: `${
-              isDefense ? '⚔️ Challenger' : '📉 Defeated'
+              isDefense ? ':bear: ⚔️ Challenger' : ':bear: 📉 Defeated'
             } (Rank #${loserRank})`,
             value: `**${loserDetails.discordName}**
 <@${loserDiscordId}>`,
