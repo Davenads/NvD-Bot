@@ -43,12 +43,12 @@ client.on('interactionCreate', async interaction => {
         // If the command doesn't exist, ignore it
         if (!command) return;
 
-        // Check if the user has the '@SvS Dueler' role by name, except for /talrasha command
-        if (command.data.name !== 'talrasha') {
-            const duelerRole = interaction.guild.roles.cache.find(role => role.name === 'SvS Dueler');
+        // CHANGED: Check if the user has the '@NvD' role by name, except for register command
+        if (command.data.name !== 'nvd-register') {
+            const duelerRole = interaction.guild.roles.cache.find(role => role.name === 'NvD');
             if (!duelerRole || !interaction.member.roles.cache.has(duelerRole.id)) {
                 return interaction.reply({
-                    content: 'You do not have the required @SvS Dueler role to use this command.',
+                    content: 'You do not have the required @NvD role to use this command.',
                     ephemeral: true
                 });
             }
