@@ -268,6 +268,20 @@ module.exports = {
         })
 
       await interaction.channel.send({ embeds: [challengeEmbed] })
+      
+      // Send notification to target player (player who didn't initiate the challenge)
+      if (targetRow[5] !== interaction.user.id) {
+        try {
+          // Send ephemeral message that will trigger a notification
+          await interaction.followUp({
+            content: `<@${targetRow[5]}> You have been challenged by Rank #${challengerRank}!`,
+            ephemeral: false
+          });
+        } catch (error) {
+          console.log(`├─ Could not send notification to target: ${error.message}`);
+        }
+      }
+      
       await interaction.editReply({
         content: 'Challenge successfully initiated!'
       })

@@ -114,6 +114,30 @@ module.exports = {
         })
       }
 
+      // NEW: Validate that players are in a challenge together
+      const winnerStatus = winnerRow[2] // Status is now column C (index 2)
+      const loserStatus = loserRow[2] // Status is now column C (index 2)
+      const winnerOpponent = winnerRow[4] // Opp# is now column E (index 4)
+      const loserOpponent = loserRow[4] // Opp# is now column E (index 4)
+      
+      // Check if both players are in challenge status
+      if (winnerStatus !== 'Challenge' || loserStatus !== 'Challenge') {
+        console.log('└─ Error: One or both players are not in a challenge')
+        return interaction.editReply({
+          content: 'One or both players are not in a challenge status. Cannot report a win.'
+        })
+      }
+      
+      // Check if players are challenging each other
+      if (parseInt(winnerOpponent) !== loserRank || parseInt(loserOpponent) !== winnerRank) {
+        console.log('└─ Error: Players are not challenging each other')
+        console.log(`│  ├─ Winner's opponent: ${winnerOpponent}, Loser rank: ${loserRank}`)
+        console.log(`│  └─ Loser's opponent: ${loserOpponent}, Winner rank: ${winnerRank}`)
+        return interaction.editReply({
+          content: 'These players are not in a challenge with each other. Cannot report a win.'
+        })
+      }
+
       console.log('├─ Processing match result...')
 
       // CHANGED: Store player details with simplified structure

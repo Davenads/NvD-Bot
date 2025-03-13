@@ -11,7 +11,7 @@ const sheets = google.sheets({
       process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
       ['https://www.googleapis.com/auth/spreadsheets']
     )
-  });
+});
 
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const SHEET_NAME = 'NvD Ladder'; // CHANGED: Updated sheet name
@@ -22,7 +22,9 @@ module.exports = {
         .setDescription('Displays the NvD ladder leaderboard'), // CHANGED: Updated description
     
     async execute(interaction) {
-        console.log(`[${new Date().toISOString()}] Command invoked: /nvd-leaderboard by ${interaction.user.tag} (${interaction.user.id})`);
+        // Simplified, concise logging
+        console.log(`[${new Date().toISOString()}] /nvd-leaderboard by ${interaction.user.tag}`);
+        
         let deferred = false;
         const deferIfNecessary = async () => {
             if (!deferred) {
@@ -46,6 +48,9 @@ module.exports = {
             }
 
             const validRows = rows.filter(row => row[0] && row[1]); // Filter out rows with missing rank or discord username
+            
+            // Additional concise logging with player count but not the actual data
+            console.log(`[${new Date().toISOString()}] Leaderboard data: ${validRows.length} players found`);
 
             if (!validRows.length) {
                 return await interaction.editReply({ content: 'No valid data available on the leaderboard.' });
@@ -177,7 +182,7 @@ module.exports = {
                 });
             });
         } catch (error) {
-            console.error(`Detailed error: ${error.message}`);
+            console.error(`Error in leaderboard command: ${error.message}`);
             await deferIfNecessary();
             await interaction.editReply({ content: 'There was an error retrieving the leaderboard data.' });
         }
