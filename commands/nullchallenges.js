@@ -60,7 +60,6 @@ module.exports = {
 
             // Current time in the specified timezone
             const now = moment().tz(DEFAULT_TIMEZONE);
-            console.log(`├─ Current time: ${now.format('YYYY-MM-DD HH:mm:ss z')}`);
             
             let requests = [];
             const processedChallenges = new Set();
@@ -69,7 +68,7 @@ module.exports = {
             const challengesWithDateParsingIssues = [];
 
             // First pass: Identify all challenges that need to be nullified
-            console.log('├─ First pass: Identifying challenges to nullify...');
+            console.log('├─ Identifying challenges to nullify...');
             rows.forEach((row, index) => {
                 if (!row[0] || !row[1]) return; // Skip rows without rank or name
                 
@@ -79,20 +78,8 @@ module.exports = {
                 const challengeDateStr = row[3]; // CHANGED: cDate is now column D (index 3)
                 const opponent = row[4]; // CHANGED: Opp# is now column E (index 4)
                 
-                // Skip non-challenge rows
-                if (status !== 'Challenge') return;
-                
-                // Log details for all challenges found
-                console.log(`│  ├─ Found challenge: Rank #${playerRank} (${discUser})`);
-                console.log(`│  │  ├─ Status: ${status}`);
-                console.log(`│  │  ├─ Challenge date: ${challengeDateStr || 'N/A'}`);
-                console.log(`│  │  └─ Opponent: ${opponent || 'N/A'}`);
-                
-                // Skip incomplete challenges
-                if (!challengeDateStr || !opponent) {
-                    console.log(`│  │     └─ Skipping: Incomplete challenge data`);
-                    return;
-                }
+                // Skip non-challenge rows or incomplete challenges
+                if (status !== 'Challenge' || !challengeDateStr || !opponent) return;
                 
                 // Handle specific date format: M/D, h:mm AM/PM EST
                 let challengeDate;
@@ -104,34 +91,19 @@ module.exports = {
                 // Parse with the specific format
                 const parsed = moment.tz(cleanDateStr, dateFormat, DEFAULT_TIMEZONE);
                 if (parsed.isValid()) {
-                    challengeDate = parsed;
-                    console.log(`│  │     ├─ Successfully parsed date: ${parsed.format('YYYY-MM-DD HH:mm:ss z')}`);
-                } else {
-                    console.log(`│  │     ├─ Failed to parse with format: ${dateFormat}`);
-                    console.log(`│  │     ├─ Original string: "${challengeDateStr}"`);
-                    console.log(`│  │     └─ Cleaned string: "${cleanDateStr}"`);
-                }
-
-                // Handle year for dates (add current year, but handle year boundary cases)
-                if (parsed.isValid()) {
-                    // If the date appears to be in the future, it's likely from last year
+                    // Handle year for dates (add current year, but handle year boundary cases)
                     const currentYear = now.year();
                     if (parsed.month() > now.month() || 
                         (parsed.month() === now.month() && parsed.date() > now.date())) {
                         parsed.year(currentYear - 1);
-                        console.log(`│  │     ├─ Adjusted year to previous year: ${parsed.format('YYYY-MM-DD HH:mm:ss z')}`);
                     } else {
                         parsed.year(currentYear);
-                        console.log(`│  │     ├─ Set year to current year: ${parsed.format('YYYY-MM-DD HH:mm:ss z')}`);
                     }
                     challengeDate = parsed;
-                }
-                
-                if (challengeDate && challengeDate.isValid()) {
+
+                    // Check if challenge is old enough to be nullified
                     const hoursDiff = now.diff(challengeDate, 'hours');
                     const daysDiff = hoursDiff / 24;
-                    
-                    console.log(`│  │     ├─ Age: ${daysDiff.toFixed(2)} days (${hoursDiff} hours)`);
                     
                     if (daysDiff > MAX_CHALLENGE_DAYS) {
                         // Create a consistent key regardless of order
@@ -139,26 +111,24 @@ module.exports = {
                         
                         if (!processedChallenges.has(challengeKey)) {
                             processedChallenges.add(challengeKey);
-                            console.log(`│  │     └─ MARKED FOR NULLIFICATION (${challengeKey})`);
+                            console.log(`│  ├─ Nullifying: Rank #${playerRank} (${discUser}) vs Rank #${opponent}`);
+                            console.log(`│  │  ├─ Challenge date: ${challengeDateStr}`);
+                            console.log(`│  │  └─ Age: ${daysDiff.toFixed(2)} days (${hoursDiff} hours)`);
                             
                             validChallengesFound.push({
                                 rowIndex: index,
                                 playerRank: playerRank,
-                                playerName: discUser, // CHANGED: Using Discord username now
+                                playerName: discUser,
                                 opponent: opponent,
                                 challengeDate: challengeDateStr,
                                 daysDiff: daysDiff
                             });
-                        } else {
-                            console.log(`│  │     └─ Already processed challenge pair (${challengeKey})`);
                         }
-                    } else {
-                        console.log(`│  │     └─ Challenge is not old enough to nullify`);
                     }
                 } else {
-                    console.log(`│  │     └─ WARNING: Could not parse date "${challengeDateStr}" for player ${discUser} (Rank ${playerRank})`);
+                    console.log(`│  ├─ WARNING: Could not parse date "${challengeDateStr}" for player ${discUser} (Rank ${playerRank})`);
                     challengesWithDateParsingIssues.push({
-                        playerName: discUser, // CHANGED: Using Discord username
+                        playerName: discUser,
                         playerRank,
                         challengeDateStr
                     });
@@ -166,44 +136,21 @@ module.exports = {
             });
             
             console.log(`├─ Found ${validChallengesFound.length} challenges that need nullification`);
-            console.log(`├─ ${challengesWithDateParsingIssues.length} challenges had date parsing issues`);
+            if (challengesWithDateParsingIssues.length > 0) {
+                console.log(`├─ ${challengesWithDateParsingIssues.length} challenges had date parsing issues`);
+            }
             
             // Second pass: Create update requests for each challenge to nullify
-            console.log('├─ Second pass: Creating update requests...');
-            for (const challenge of validChallengesFound) {
-                console.log(`│  ├─ Processing challenge: Rank #${challenge.playerRank} (${challenge.playerName}) vs Rank #${challenge.opponent}`);
-                
-                // Update the challenger's row
-                requests.push({
-                    updateCells: {
-                        range: {
-                            sheetId: sheetId,
-                            startRowIndex: challenge.rowIndex + 1,
-                            endRowIndex: challenge.rowIndex + 2,
-                            startColumnIndex: 2, // CHANGED: Column C (Status) is index 2
-                            endColumnIndex: 5 // CHANGED: Through Column E (Opp#) is index 4
-                        },
-                        rows: [{
-                            values: [
-                                { userEnteredValue: { stringValue: 'Available' } },
-                                { userEnteredValue: { stringValue: '' } },
-                                { userEnteredValue: { stringValue: '' } }
-                            ]
-                        }],
-                        fields: 'userEnteredValue'
-                    }
-                });
-                console.log(`│  │  ├─ Added request to update challenger row (index ${challenge.rowIndex + 1})`);
-
-                // Find and update the opponent's row
-                const opponentRowIndex = rows.findIndex(row => row[0] === challenge.opponent);
-                if (opponentRowIndex !== -1) {
+            if (validChallengesFound.length > 0) {
+                console.log('├─ Creating update requests...');
+                for (const challenge of validChallengesFound) {
+                    // Update the challenger's row
                     requests.push({
                         updateCells: {
                             range: {
                                 sheetId: sheetId,
-                                startRowIndex: opponentRowIndex + 1,
-                                endRowIndex: opponentRowIndex + 2,
+                                startRowIndex: challenge.rowIndex + 1,
+                                endRowIndex: challenge.rowIndex + 2,
                                 startColumnIndex: 2, // CHANGED: Column C (Status) is index 2
                                 endColumnIndex: 5 // CHANGED: Through Column E (Opp#) is index 4
                             },
@@ -217,28 +164,47 @@ module.exports = {
                             fields: 'userEnteredValue'
                         }
                     });
-                    console.log(`│  │  └─ Added request to update opponent row (index ${opponentRowIndex + 1})`);
-                } else {
-                    console.log(`│  │  └─ WARNING: Could not find opponent row with rank ${challenge.opponent}`);
+
+                    // Find and update the opponent's row
+                    const opponentRowIndex = rows.findIndex(row => row[0] === challenge.opponent);
+                    if (opponentRowIndex !== -1) {
+                        requests.push({
+                            updateCells: {
+                                range: {
+                                    sheetId: sheetId,
+                                    startRowIndex: opponentRowIndex + 1,
+                                    endRowIndex: opponentRowIndex + 2,
+                                    startColumnIndex: 2, // CHANGED: Column C (Status) is index 2
+                                    endColumnIndex: 5 // CHANGED: Through Column E (Opp#) is index 4
+                                },
+                                rows: [{
+                                    values: [
+                                        { userEnteredValue: { stringValue: 'Available' } },
+                                        { userEnteredValue: { stringValue: '' } },
+                                        { userEnteredValue: { stringValue: '' } }
+                                    ]
+                                }],
+                                fields: 'userEnteredValue'
+                            }
+                        });
+                    } else {
+                        console.log(`│  ├─ WARNING: Could not find opponent row with rank ${challenge.opponent}`);
+                    }
+
+                    // Store challenge details for the embed message
+                    const opponentName = rows.find(r => r[0] === challenge.opponent)?.[1] || 'Unknown'; // CHANGED: Discord username is index 1
+                    nullifiedChallenges.push({
+                        player: challenge.playerName,
+                        playerRank: challenge.playerRank,
+                        opponent: opponentName,
+                        opponentRank: challenge.opponent,
+                        date: challenge.challengeDateStr,
+                        daysPast: Math.floor(challenge.daysDiff)
+                    });
                 }
 
-                // Store challenge details for the embed message
-                const opponentName = rows.find(r => r[0] === challenge.opponent)?.[1] || 'Unknown'; // CHANGED: Discord username is index 1
-                nullifiedChallenges.push({
-                    player: challenge.playerName,
-                    playerRank: challenge.playerRank,
-                    opponent: opponentName,
-                    opponentRank: challenge.opponent,
-                    date: challenge.challengeDateStr,
-                    daysPast: Math.floor(challenge.daysDiff)
-                });
-            }
-
-            console.log(`├─ Generated ${requests.length} update requests`);
-
-            if (requests.length > 0) {
                 // Execute all updates
-                console.log('├─ Executing batch update...');
+                console.log(`├─ Executing batch update for ${requests.length} requests...`);
                 await sheets.spreadsheets.batchUpdate({
                     spreadsheetId: SPREADSHEET_ID,
                     resource: { requests }
