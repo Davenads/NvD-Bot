@@ -1,11 +1,9 @@
 // Load environment variables
 require('dotenv').config();
-
 // Import necessary modules
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const { google } = require('googleapis');
 const { logError } = require('../logger'); // Import the logger
-
 // Initialize the Google Sheets API client
 const sheets = google.sheets({
     version: 'v4',
@@ -16,10 +14,8 @@ const sheets = google.sheets({
       ['https://www.googleapis.com/auth/spreadsheets']
     )
   });
-
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const sheetId = 0; // CHANGED: Numeric sheetId for 'NvD Ladder' tab
-
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('nvd-register') // CHANGED: Added 'nvd-' prefix
@@ -33,7 +29,6 @@ module.exports = {
             option.setName('notes')
                 .setDescription('Optional notes for the player')
                 .setRequired(false)),
-
     async autocomplete(interaction) {
         const focusedOption = interaction.options.getFocused(true);
         // Only show autocomplete options to admin users
@@ -45,13 +40,10 @@ module.exports = {
                 const guild = interaction.guild;
                 const nvdRole = guild.roles.cache.find(role => role.name === 'NvD');
                 if (!nvdRole) return interaction.respond([]);
-
                 const members = await guild.members.fetch();
                 const eligibleMembers = members.filter(member => member.roles.cache.has(nvdRole.id));
-
                 const choices = eligibleMembers.map(member => member.user.username);
                 const filtered = choices.filter(choice => choice.toLowerCase().includes(focusedOption.value.toLowerCase())).slice(0, 25); // Limit choices to 25
-
                 await interaction.respond(
                     filtered.map(choice => ({ name: choice, value: choice }))
                 );
@@ -63,7 +55,6 @@ module.exports = {
             await interaction.respond([]);
         }
     },
-
     async execute(interaction) {
         // Enhanced logging - timestamp and command invocation details
         const timestamp = new Date().toISOString();
@@ -71,9 +62,7 @@ module.exports = {
         console.log(`├─ Invoked by: ${interaction.user.tag} (${interaction.user.id})`);
         console.log(`├─ Channel: #${interaction.channel.name} (${interaction.channel.id})`);
         console.log(`├─ Guild: ${interaction.guild.name} (${interaction.guild.id})`);
-
         await interaction.deferReply(); // Defer the reply to prevent timeout issues
-
         // Check if the user has the NvD Admin role
         const isAdmin = interaction.member.roles.cache.some(role => role.name === 'NvD Admin');
         console.log(`├─ Admin privileges: ${isAdmin ? 'Yes' : 'No'}`);
@@ -93,7 +82,7 @@ module.exports = {
             
             if (!discUserId) {
                 console.log(`└─ Error: Target Discord user not found`);
-                return interaction.editReply({ content: 'Could not find the specified Discord user.', ephemeral: true });
+                return interaction.editReply({ content: 'Could not find the specified Discord user.', flags: MessageFlags.Ephemeral });
             }
         } else {
             // User is registering themselves
@@ -104,7 +93,6 @@ module.exports = {
         
         const notes = interaction.options.getString('notes') || '';
         console.log(`├─ Notes provided: ${notes ? 'Yes' : 'No'}`);
-
         try {
             console.log(`├─ Fetching current ladder data...`);
             // CHANGED: Fetch data from the Google Sheet (Main Tab: 'NvD Ladder')
@@ -112,7 +100,6 @@ module.exports = {
                 spreadsheetId: SPREADSHEET_ID,
                 range: `NvD Ladder!A2:H`, // CHANGED: Fetch columns A to H (new structure)
             });
-
             const rows = result.data.values || [];
             console.log(`├─ Current ladder entries: ${rows.length}`);
             
@@ -125,10 +112,9 @@ module.exports = {
                 console.log(`└─ Error: User already exists on ladder`);
                 return interaction.editReply({
                     content: 'This Discord user already has a character on the NvD ladder.',
-                    ephemeral: true
+                    flags: MessageFlags.Ephemeral
                 });
             }
-
             // Find the first empty row based on the Discord User column (Column B)
             let emptyRowIndex = rows.length + 2; // Default to appending at the end
             for (let i = 0; i < rows.length; i++) {
@@ -138,7 +124,6 @@ module.exports = {
                 }
             }
             console.log(`├─ Registration position: Row ${emptyRowIndex} (Rank #${emptyRowIndex - 1})`);
-
             // CHANGED: New player row with simplified structure (no spec/element)
             const newPlayerRow = [
                 emptyRowIndex - 1, // Rank (new entry based on available position)
@@ -150,7 +135,6 @@ module.exports = {
                 notes, // Notes in Column G
                 '' // Cooldown in Column H
             ];
-
             console.log(`├─ Preparing sheet updates...`);
             // Create requests for copying formatting from an existing row
             const copyRowIndex = 1; // Assuming row 2 (index 1) has the desired formatting
@@ -215,14 +199,12 @@ module.exports = {
                     }
                 }
             ];
-
             console.log(`├─ Executing batch update for formatting...`);
             // Execute batch update for copying formatting, data validation, and custom styling
             await sheets.spreadsheets.batchUpdate({
                 spreadsheetId: SPREADSHEET_ID,
                 resource: { requests }
             });
-
             console.log(`├─ Adding new player row...`);
             // Update the Google Sheet with the new row at the correct position
             await sheets.spreadsheets.values.update({
@@ -233,7 +215,6 @@ module.exports = {
                     values: [newPlayerRow]
                 }
             });
-
             console.log(`├─ Setting status to 'Available'...`);
             // Ensure the Status column (Column C) is set to 'Available' after copying data validation
             await sheets.spreadsheets.values.update({
@@ -244,7 +225,6 @@ module.exports = {
                     values: [['Available']]
                 }
             });
-
             console.log(`├─ Creating response embed...`);
             // CHANGED: Create an embed with NvD theme and no spec/element
             const embed = new EmbedBuilder()
@@ -257,14 +237,13 @@ module.exports = {
                 )
                 .setFooter({ text: 'Successfully added to the NvD Ladder!', iconURL: interaction.client.user.displayAvatarURL() })
                 .setTimestamp();
-
             console.log(`└─ Registration completed successfully`);
             // Reply with the embed
             return interaction.editReply({ embeds: [embed] });
         } catch (error) {
             console.error(`└─ Error registering new player:`, error);
             logError(`Register command error: ${error.message}\nStack: ${error.stack}`);
-            return interaction.editReply({ content: 'An error occurred while registering the player. Please try again later.', ephemeral: true });
+            return interaction.editReply({ content: 'An error occurred while registering the player. Please try again later.', flags: MessageFlags.Ephemeral });
         }
     },
 };

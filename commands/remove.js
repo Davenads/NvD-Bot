@@ -1,7 +1,6 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js')
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js')
 const { google } = require('googleapis')
 const { logError } = require('../logger')
-
 // Initialize the Google Sheets API client
 const sheets = google.sheets({
   version: 'v4',
@@ -12,12 +11,10 @@ const sheets = google.sheets({
     ['https://www.googleapis.com/auth/spreadsheets']
   )
 });
-
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID
 const MAIN_SHEET = 'NvD Ladder' // CHANGED: Updated sheet name
 const VACATION_SHEET = 'Extended Vacation'
 const sheetId = 0 // CHANGED: NvD Ladder tab
-
 const farewellMessages = [
   'May your adventures continue beyond the ladder! 🌟',
   'Your legacy in the ladder will be remembered! ⚔️',
@@ -28,7 +25,6 @@ const farewellMessages = [
   'May your future battles be glorious! ⚔️',
   'Your name shall echo in the halls of the ladder! 🏛️'
 ]
-
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('nvd-remove') // CHANGED: Added nvd- prefix
@@ -39,13 +35,10 @@ module.exports = {
         .setDescription('The rank number of the player to remove')
         .setRequired(true)
     ),
-
   async execute (interaction) {
     console.log(`\n[${new Date().toISOString()}] Remove Command`)
     console.log(`├─ Invoked by: ${interaction.user.tag}`)
-
-    await interaction.deferReply({ ephemeral: true })
-
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral })
     // CHANGED: Check if the user has the '@NvD Admin' role
     const managerRole = interaction.guild.roles.cache.find(
       role => role.name === 'NvD Admin'
@@ -54,13 +47,11 @@ module.exports = {
       return interaction.editReply({
         content:
           'You do not have the required @NvD Admin role to use this command.',
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
       })
     }
-
     try {
       const rankToRemove = interaction.options.getInteger('rank')
-
       // First, fetch data from both sheets
       const [mainResult, vacationResult] = await Promise.all([
         sheets.spreadsheets.values.get({
@@ -72,16 +63,14 @@ module.exports = {
           range: `${VACATION_SHEET}!A2:H` // CHANGED: Updated column range
         })
       ])
-
       const rows = mainResult.data.values
       if (!rows || !rows.length) {
         console.log('└─ Error: No data found in leaderboard')
         return interaction.editReply({
           content: 'No data available on the leaderboard.',
-          ephemeral: true
+          flags: MessageFlags.Ephemeral
         })
       }
-
       // Find the row to remove
       const rowIndex = rows.findIndex(
         row => row[0] && parseInt(row[0]) === rankToRemove
@@ -90,19 +79,16 @@ module.exports = {
         console.log(`└─ Error: Rank ${rankToRemove} not found`)
         return interaction.editReply({
           content: 'Rank not found in the ladder.',
-          ephemeral: true
+          flags: MessageFlags.Ephemeral
         })
       }
-
       // Store player details
       const playerData = rows[rowIndex]
       const discordUsername = playerData[1] // CHANGED: Discord username is now column B (index 1)
       const discordId = playerData[5] // CHANGED: Discord ID is now column F (index 5)
-
       console.log('├─ Removing Player:')
       console.log(`│  ├─ Rank: #${rankToRemove}`)
       console.log(`│  └─ Discord: ${discordUsername}`)
-
       // Find first empty row in Extended Vacation tab
       const vacationRows = vacationResult.data.values || []
       let emptyRowIndex = vacationRows.length + 2
@@ -112,12 +98,9 @@ module.exports = {
           break
         }
       }
-
       console.log(`├─ Moving to Extended Vacation row ${emptyRowIndex}`)
-
       // Create batch update requests
       const requests = []
-
       // 1. Add row to Extended Vacation tab
       await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
@@ -127,16 +110,13 @@ module.exports = {
           values: [playerData]
         }
       })
-
       // 2. Handle active challenges affected by removal
       // First, check for any challenge pairs that span across the removed rank
       for (let i = 0; i < rows.length; i++) {
         const currentRow = rows[i]
         if (!currentRow[0] || !currentRow[4]) continue // CHANGED: Opp# is now column E (index 4)
-
         const currentRank = parseInt(currentRow[0])
         const oppRank = parseInt(currentRow[4]) // CHANGED: Opp# is now column E (index 4)
-
         // Check if this challenge pair spans across the removed rank
         if (
           currentRow[2] === 'Challenge' && // CHANGED: Status is now column C (index 2)
@@ -146,7 +126,6 @@ module.exports = {
           console.log(
             `├─ Found spanning challenge pair: Rank ${currentRank} vs Rank ${oppRank}`
           )
-
           // For the player above the removed rank, update their Opp# to reflect their opponent's new rank
           if (currentRank < rankToRemove) {
             requests.push({
@@ -176,14 +155,12 @@ module.exports = {
           }
         }
       }
-
       // 3. Handle direct challenges with the removed player
       if (playerData[2] === 'Challenge' && playerData[4]) { // CHANGED: Status is column C (index 2), Opp# is column E (index 4)
         const opponentRank = parseInt(playerData[4]) // CHANGED: Opp# is column E (index 4)
         const opponentIndex = rows.findIndex(
           row => row[0] && parseInt(row[0]) === opponentRank
         )
-
         if (opponentIndex !== -1) {
           console.log(`├─ Clearing challenge with rank #${opponentRank}`)
           requests.push({
@@ -212,7 +189,6 @@ module.exports = {
           })
         }
       }
-
       // 4. Delete the row from main ladder
       requests.push({
         deleteDimension: {
@@ -224,17 +200,14 @@ module.exports = {
           }
         }
       })
-
       // 5. Update remaining ranks and opponent references
       let ranksUpdated = 0
       for (let i = rowIndex + 1; i < rows.length; i++) {
         const currentRow = rows[i]
         if (!currentRow[0]) continue
-
         const currentRank = parseInt(currentRow[0])
         const newRank = currentRank - 1
         ranksUpdated++
-
         // Update rank number
         requests.push({
           updateCells: {
@@ -258,11 +231,9 @@ module.exports = {
             fields: 'userEnteredValue,userEnteredFormat.horizontalAlignment'
           }
         })
-
         // Update opponent references if needed
         if (currentRow[2] === 'Challenge' && currentRow[4]) { // CHANGED: Status is column C (index 2), Opp# is column E (index 4)
           const oppRank = parseInt(currentRow[4]) // CHANGED: Opp# is column E (index 4)
-
           if (oppRank > rankToRemove) {
             console.log(
               `├─ Updating opponent reference: Rank #${currentRank} -> #${newRank}`
@@ -322,9 +293,7 @@ module.exports = {
           }
         }
       }
-
       console.log(`├─ Updated ${ranksUpdated} ranks`)
-
       // Execute all updates
       if (requests.length > 0) {
         await sheets.spreadsheets.batchUpdate({
@@ -332,17 +301,14 @@ module.exports = {
           resource: { requests }
         })
       }
-
       // Verify ranks
       const verificationResult = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
         range: `${MAIN_SHEET}!A2:A`
       })
-
       const updatedRanks = verificationResult.data.values
       let ranksAreCorrect = true
       let firstIncorrectRank = null
-
       if (updatedRanks) {
         for (let i = 0; i < updatedRanks.length; i++) {
           if (updatedRanks[i][0] && parseInt(updatedRanks[i][0]) !== i + 1) {
@@ -352,11 +318,9 @@ module.exports = {
           }
         }
       }
-
       console.log(
         `└─ Rank verification: ${ranksAreCorrect ? 'Success' : 'Failed'}`
       )
-
       // CHANGED: Simplified farewell embed with no spec/element
       const farewellEmbed = new EmbedBuilder()
         .setColor('#8A2BE2') // CHANGED: Updated color for NvD theme
@@ -385,14 +349,12 @@ module.exports = {
           iconURL: interaction.client.user.displayAvatarURL()
         })
         .setTimestamp()
-
       // Send the embed to the channel
       await interaction.channel.send({ embeds: [farewellEmbed] })
-
       // Send confirmation to command issuer
       await interaction.editReply({
         content: `Successfully moved ${discordUsername} to Extended Vacation and updated all affected rankings and challenges.`,
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
       })
     } catch (error) {
       console.error(`└─ Error: ${error.message}`)
@@ -400,7 +362,7 @@ module.exports = {
       return interaction.editReply({
         content:
           'An error occurred while removing the player. Please try again later.',
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
       })
     }
   }

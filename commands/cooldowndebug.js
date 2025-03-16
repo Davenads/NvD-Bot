@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const redisClient = require('../redis-client');
 
 module.exports = {
@@ -45,11 +45,11 @@ module.exports = {
         if (!interaction.member.roles.cache.some(role => role.name === 'NvD Admin')) {
             return interaction.reply({
                 content: 'You need the NvD Admin role to use this command.',
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
         }
 
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         const subcommand = interaction.options.getSubcommand();
 

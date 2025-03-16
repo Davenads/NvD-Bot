@@ -1,5 +1,4 @@
-const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
-
+const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags } = require('discord.js');
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('nvd-help') // CHANGED: Added nvd- prefix
@@ -43,7 +42,6 @@ module.exports = {
                 iconURL: interaction.client.user.displayAvatarURL()
             })
             .setTimestamp();
-
         const managerEmbed = new EmbedBuilder()
             .setColor('#8A2BE2') // CHANGED: Updated color for NvD theme
             .setTitle('🛡️ NvD Admin Commands') // CHANGED: Updated title
@@ -79,7 +77,6 @@ module.exports = {
                 iconURL: interaction.client.user.displayAvatarURL()
             })
             .setTimestamp();
-
         const row = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
@@ -87,22 +84,17 @@ module.exports = {
                     .setLabel('Toggle Admin Commands') // CHANGED: Updated button label
                     .setStyle(ButtonStyle.Primary)
             );
-
         let components = isManager ? [row] : [];
-
         const initialMessage = await interaction.reply({
             embeds: [duelerEmbed],
             components,
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
-
         if (isManager) {
             const collector = initialMessage.createMessageComponentCollector({
                 time: 60000 // Button will work for 1 minute
             });
-
             let showingManagerCommands = false;
-
             collector.on('collect', async i => {
                 if (i.customId === 'toggle_commands') {
                     showingManagerCommands = !showingManagerCommands;
@@ -112,7 +104,6 @@ module.exports = {
                     });
                 }
             });
-
             collector.on('end', () => {
                 // Remove the button after timeout
                 initialMessage.edit({

@@ -1,5 +1,5 @@
 require('dotenv').config()
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js')
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js')
 const { google } = require('googleapis')
 const { logError } = require('../logger')
 const redisClient = require('../redis-client');
@@ -43,10 +43,10 @@ module.exports = {
     if (interaction.channelId !== '1144011555378298910') { // CHANGED: Updated channel ID
       return await interaction.reply({
         content: 'This command can only be used in the #nvd-challenges channel.', // CHANGED: Updated channel name
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
       })
     }
-    await interaction.deferReply({ ephemeral: true })
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral })
     const timestamp = new Date().toISOString()
     console.log(`\n[${timestamp}] Challenge Command Execution Started`)
     console.log(

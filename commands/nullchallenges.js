@@ -1,8 +1,7 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const { google } = require('googleapis');
 const moment = require('moment-timezone');  // Use moment-timezone for better timezone handling
 const { logError } = require('../logger');
-
 // Initialize the Google Sheets API client
 const sheets = google.sheets({
     version: 'v4',
@@ -13,12 +12,10 @@ const sheets = google.sheets({
       ['https://www.googleapis.com/auth/spreadsheets']
     )
   });
-
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const sheetId = 0; // CHANGED: Numeric sheetId for 'NvD Ladder' tab
 const DEFAULT_TIMEZONE = 'America/New_York'; // The timezone used for challenge dates
 const MAX_CHALLENGE_DAYS = 3; // Maximum number of days a challenge can be active
-
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('nvd-nullchallenges') // CHANGED: Added nvd- prefix
@@ -29,8 +26,7 @@ module.exports = {
         console.log(`\n[${timestamp}] NullChallenges Command Execution Started`);
         console.log(`├─ Invoked by: ${interaction.user.tag} (${interaction.user.id})`);
         
-        await interaction.deferReply({ ephemeral: true });
-
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         try {
             // CHANGED: Check if the user has the '@NvD Admin' role
             const managerRole = interaction.guild.roles.cache.find(role => role.name === 'NvD Admin');
@@ -47,7 +43,6 @@ module.exports = {
                 spreadsheetId: SPREADSHEET_ID,
                 range: `NvD Ladder!A2:H`, // CHANGED: Updated sheet name and range
             });
-
             const rows = result.data.values;
             if (!rows?.length) {
                 console.log('└─ Error: No data found in the leaderboard');
@@ -57,7 +52,6 @@ module.exports = {
             }
             
             console.log(`├─ Processing ${rows.length} rows from the leaderboard...`);
-
             // Current time in the specified timezone
             const now = moment().tz(DEFAULT_TIMEZONE);
             
@@ -66,7 +60,6 @@ module.exports = {
             const nullifiedChallenges = [];
             const validChallengesFound = [];
             const challengesWithDateParsingIssues = [];
-
             // First pass: Identify all challenges that need to be nullified
             console.log('├─ Identifying challenges to nullify...');
             rows.forEach((row, index) => {
@@ -84,7 +77,6 @@ module.exports = {
                 // Handle specific date format: M/D, h:mm AM/PM EST
                 let challengeDate;
                 const dateFormat = 'M/D, h:mm A';
-
                 // Remove timezone abbreviation (EST/EDT) before parsing
                 const cleanDateStr = challengeDateStr.replace(/\s+(EST|EDT)$/i, '').trim();
                 
@@ -100,7 +92,6 @@ module.exports = {
                         parsed.year(currentYear);
                     }
                     challengeDate = parsed;
-
                     // Check if challenge is old enough to be nullified
                     const hoursDiff = now.diff(challengeDate, 'hours');
                     const daysDiff = hoursDiff / 24;
@@ -164,7 +155,6 @@ module.exports = {
                             fields: 'userEnteredValue'
                         }
                     });
-
                     // Find and update the opponent's row
                     const opponentRowIndex = rows.findIndex(row => row[0] === challenge.opponent);
                     if (opponentRowIndex !== -1) {
@@ -190,7 +180,6 @@ module.exports = {
                     } else {
                         console.log(`│  ├─ WARNING: Could not find opponent row with rank ${challenge.opponent}`);
                     }
-
                     // Store challenge details for the embed message
                     const opponentName = rows.find(r => r[0] === challenge.opponent)?.[1] || 'Unknown'; // CHANGED: Discord username is index 1
                     nullifiedChallenges.push({
@@ -202,7 +191,6 @@ module.exports = {
                         daysPast: Math.floor(challenge.daysDiff)
                     });
                 }
-
                 // Execute all updates
                 console.log(`├─ Executing batch update for ${requests.length} requests...`);
                 await sheets.spreadsheets.batchUpdate({
@@ -210,14 +198,12 @@ module.exports = {
                     resource: { requests }
                 });
                 console.log(`├─ Batch update completed successfully`);
-
                 // Create embed message
                 const embed = new EmbedBuilder()
                     .setTitle('🛡️ Nullified Old Challenges 🛡️')
                     .setDescription(`✨ Success! Nullified ${nullifiedChallenges.length} challenge pairs older than ${MAX_CHALLENGE_DAYS} days! ✨`)
                     .setColor('#8A2BE2') // CHANGED: Updated color for NvD theme
                     .setTimestamp();
-
                 // Add nullified challenges details
                 if (nullifiedChallenges.length > 0) {
                     const challengesList = nullifiedChallenges
@@ -240,7 +226,6 @@ module.exports = {
                         });
                     }
                 }
-
                 // Add date parsing issues if any
                 if (challengesWithDateParsingIssues.length > 0) {
                     const issuesList = challengesWithDateParsingIssues
@@ -254,16 +239,13 @@ module.exports = {
                         });
                     }
                 }
-
                 embed.setFooter({ 
                     text: 'Challenges nullified successfully! Players can now issue new challenges.',
                     iconURL: interaction.client.user.displayAvatarURL()
                 });
-
                 // Send the public embed message
                 console.log('├─ Sending embed message to channel...');
                 await interaction.channel.send({ embeds: [embed] });
-
                 // Update the deferred reply
                 await interaction.editReply({ 
                     content: `Successfully nullified ${nullifiedChallenges.length} challenge pairs.` 
@@ -276,7 +258,6 @@ module.exports = {
                     content: `No challenges older than ${MAX_CHALLENGE_DAYS} days found.` 
                 });
             }
-
         } catch (error) {
             console.error(`└─ Error executing nvd-nullchallenges command: ${error.message}`); // CHANGED: Updated command name
             console.error(error.stack);

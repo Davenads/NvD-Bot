@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const { google } = require('googleapis');
 const { logError } = require('../logger'); // Import the logger
 
@@ -31,14 +31,14 @@ module.exports = {
 
             const rows = result.data.values;
             if (!rows || !rows.length) {
-                return interaction.reply({ content: 'No players found.', ephemeral: true });
+                return interaction.reply({ content: 'No players found.', flags: MessageFlags.Ephemeral });
             }
 
             // Find players currently in "Vacation" state
             const vacations = rows.filter(row => row[2] === 'Vacation'); // CHANGED: Status is now column C (index 2)
             
             if (vacations.length === 0) {
-                return interaction.reply({ content: 'There are currently no players on vacation.', ephemeral: true });
+                return interaction.reply({ content: 'There are currently no players on vacation.', flags: MessageFlags.Ephemeral });
             }
 
             // Sort players by vacation date (cDate, column D, index 3)
@@ -99,7 +99,7 @@ module.exports = {
             const message = await interaction.reply({
                 embeds: [pages[currentPage]],
                 components: [buttonRow],
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
 
             const collector = message.createMessageComponentCollector({
@@ -153,7 +153,7 @@ module.exports = {
             });
         } catch (error) {
             logError(`Error fetching current vacations: ${error.message}\nStack: ${error.stack}`);
-            await interaction.reply({ content: 'There was an error fetching the players on vacation. Please try again.', ephemeral: true });
+            await interaction.reply({ content: 'There was an error fetching the players on vacation. Please try again.', flags: MessageFlags.Ephemeral });
         }
     },
 };
