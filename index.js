@@ -11,6 +11,10 @@ const client = new Client({
         GatewayIntentBits.MessageContent // Added MessageContent intent to ensure autocomplete works correctly
     ]
 });
+
+// Make client globally available for Redis expiry handlers
+global.discordClient = client;
+
 // Create a collection to store commands
 client.commands = new Collection();
 // Load the command handler
@@ -21,10 +25,16 @@ for (const file of commandFiles) {
     const command = require(filePath);
     client.commands.set(command.data.name, command);
 }
+// Load scheduled tasks module (disabled but kept for future use if needed)
+// const { initScheduledTasks } = require('./scheduledTasks');
+
 // Event listener for when the bot becomes ready and online
 client.once('ready', () => {
     const timestamp = new Date().toLocaleString();
     console.log(`Logged in as ${client.user.tag} at ${timestamp}`);
+    
+    // Scheduled tasks are disabled in favor of Redis auto-null system
+    // initScheduledTasks(client);
 });
 // Event listener for handling interactions (slash commands and autocomplete)
 client.on('interactionCreate', async interaction => {

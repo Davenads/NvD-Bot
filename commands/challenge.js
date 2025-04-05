@@ -282,6 +282,24 @@ module.exports = {
         }
       }
       
+      // Add challenge to Redis for auto-nulling 
+      console.log('├─ Storing challenge in Redis for auto-nulling...');
+      const challenger = {
+        discordId: challengerRow[5], // Discord ID
+        discordName: challengerRow[1], // Discord username
+        rank: challengerRank
+      };
+      
+      const target = {
+        discordId: targetRow[5], // Discord ID
+        discordName: targetRow[1], // Discord username
+        rank: targetRank
+      };
+      
+      // Store challenge in Redis
+      await redisClient.setChallenge(challenger, target, interaction.client);
+      console.log('├─ Challenge stored in Redis successfully');
+      
       await interaction.editReply({
         content: 'Challenge successfully initiated!'
       })

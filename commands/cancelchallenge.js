@@ -1,6 +1,7 @@
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 require('dotenv').config();
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const redisClient = require('../redis-client');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -100,6 +101,11 @@ module.exports = {
       // CHANGED: Simplified embed with no spec/element
       const playerDiscUser = playerRow[1]; // CHANGED: Discord username is now column B (index 1)
       const opponentDiscUser = opponentRow[1]; // CHANGED: Discord username is now column B (index 1)
+
+      // Remove the challenge from Redis
+      console.log('Removing challenge from Redis...');
+      await redisClient.removeChallenge(playerRow[0], opponentRow[0]);
+      console.log('Challenge removed from Redis successfully');
 
       const embed = new EmbedBuilder()
         .setTitle('⚔️ Challenge Canceled ⚔️')

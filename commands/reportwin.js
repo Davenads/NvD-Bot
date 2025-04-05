@@ -287,15 +287,20 @@ module.exports = {
         discordId: loserRow[5], // CHANGED: Discord ID is now column F (index 5)
         name: loserRow[1] // CHANGED: Discord username is now column B (index 1)
       }
-      // Set cooldown in Redis
+      // Set cooldown in Redis and remove challenge
       try {
-        await redisClient.setCooldown(player1, player2)
+        // Set cooldown between players
+        await redisClient.setCooldown(player1, player2);
         console.log('Cooldown set successfully for match:', {
           winner: player1.discordId,
           loser: player2.discordId
-        })
+        });
+        
+        // Remove the challenge from Redis
+        await redisClient.removeChallenge(winnerRank, loserRank);
+        console.log('Challenge removed from Redis successfully');
       } catch (cooldownError) {
-        console.error('Error setting cooldown:', cooldownError)
+        console.error('Error setting cooldown or removing challenge:', cooldownError);
         // Don't throw error here - continue with match reporting even if cooldown fails
       }
       

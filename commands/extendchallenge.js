@@ -2,6 +2,7 @@ const { GoogleSpreadsheet } = require('google-spreadsheet');
 require('dotenv').config();
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { DateTime } = require('luxon');
+const redisClient = require('../redis-client');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -147,6 +148,34 @@ module.exports = {
       // CHANGED: Simplified embed with no spec/element
       const playerDiscUser = playerRow[1]; // CHANGED: Discord username is now column B (index 1)
       const opponentDiscUser = opponentRow[1]; // CHANGED: Discord username is now column B (index 1)
+      const playerDiscordId = playerRow[5]; // Discord ID is column F (index 5)
+      const opponentDiscordId = opponentRow[5]; // Discord ID is column F (index 5)
+      
+      // Remove existing challenge from Redis and create a new one with extended expiry
+      try {
+        // Remove old challenge
+        await redisClient.removeChallenge(playerRow[0], opponentRow[0]);
+        
+        // Create new challenge
+        const challenger = {
+          discordId: playerDiscordId,
+          discordName: playerDiscUser,
+          rank: playerRow[0]
+        };
+        
+        const target = {
+          discordId: opponentDiscordId,
+          discordName: opponentDiscUser,
+          rank: opponentRow[0]
+        };
+        
+        // Store the extended challenge in Redis
+        await redisClient.setChallenge(challenger, target, interaction.client);
+        console.log('Challenge Redis entry updated with extended expiry');
+      } catch (redisError) {
+        console.error('Error updating Redis challenge:', redisError);
+        // Continue with the command even if Redis update fails
+      }
 
       const embed = new EmbedBuilder()
         .setTitle('⏳ Challenge Extended ⏳')
