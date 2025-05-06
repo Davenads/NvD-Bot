@@ -24,7 +24,7 @@ const MAX_CHALLENGE_DAYS = 3; // Maximum number of days a challenge can be activ
  */
 async function autoNullChallenges(client) {
   const timestamp = new Date().toISOString();
-  console.log(`\n[${timestamp}] Scheduled Auto-Null Challenges Task Started`);
+  console.log(`\n[${timestamp}] Scheduled Auto-Null Challenges Task Started (Sheet-based backup check)`);
   
   try {
     console.log('├─ Fetching data from Google Sheets...');
@@ -274,10 +274,10 @@ async function autoNullChallenges(client) {
 function initScheduledTasks(client) {
   console.log('Initializing scheduled tasks...');
 
-  // Schedule auto-null challenges task to run every 3 hours
-  // '0 */3 * * *' = At minute 0, every 3 hours
-  cron.schedule('0 */3 * * *', () => {
-    console.log('Running scheduled auto-null challenges task');
+  // Schedule auto-null challenges task to run once daily at midnight
+  // '0 0 * * *' = At 00:00 (midnight) every day
+  cron.schedule('0 0 * * *', () => {
+    console.log('Running daily scheduled auto-null challenges task');
     autoNullChallenges(client);
   });
 

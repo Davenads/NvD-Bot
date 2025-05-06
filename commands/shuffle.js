@@ -96,6 +96,13 @@ module.exports = {
                     }
                 }
             });
+            // First clear the entire range to ensure no data persists unintentionally
+            console.log('├─ Clearing previous data...');
+            await sheets.spreadsheets.values.clear({
+                spreadsheetId: SPREADSHEET_ID,
+                range: `${SHEET_NAME}!A2:H${rows.length + 1}`,
+            });
+            
             // Update the Google Sheet with the shuffled data
             console.log('├─ Updating sheet with shuffled data...');
             await sheets.spreadsheets.values.update({
