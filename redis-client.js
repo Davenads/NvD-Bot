@@ -14,15 +14,36 @@ const NOTIFICATION_CHANNEL_ID = '1144011555378298910'; // NvD challenges channel
 
 class RedisClient {
     constructor() {
-        this.client = new Redis({
-            host: process.env.REDIS_HOST || 'localhost',
-            port: process.env.REDIS_PORT || 6379,
-            password: process.env.REDIS_PASSWORD,
-            retryStrategy: (times) => {
-                const delay = Math.min(times * 50, 2000);
-                return delay;
-            }
-        });
+        let redisConfig = {};
+
+        // Parse Redis Cloud URL if available
+        if (process.env.REDISCLOUD_URL) {
+            const redisUrl = new URL(process.env.REDISCLOUD_URL);
+            redisConfig = {
+                host: redisUrl.hostname,
+                port: redisUrl.port,
+                password: redisUrl.password ? redisUrl.password : undefined,
+                username: redisUrl.username === 'default' ? undefined : redisUrl.username,
+                retryStrategy: (times) => {
+                    const delay = Math.min(times * 50, 2000);
+                    return delay;
+                }
+            };
+        } else {
+            // Fallback to individual environment variables
+            redisConfig = {
+                host: process.env.REDIS_HOST || 'localhost',
+                port: process.env.REDIS_PORT || 6379,
+                password: process.env.REDIS_PASSWORD,
+                retryStrategy: (times) => {
+                    const delay = Math.min(times * 50, 2000);
+                    return delay;
+                }
+            };
+        }
+
+        // Use the config
+        this.client = new Redis(redisConfig);
 
         this.client.on('error', (err) => {
             console.error('Redis Client Error:', err);
@@ -55,14 +76,33 @@ class RedisClient {
             }
             
             // Create a separate subscription client (Redis requires a dedicated connection for pub/sub)
-            this.subClient = new Redis({
-                host: process.env.REDIS_HOST || 'localhost',
-                port: process.env.REDIS_PORT || 6379,
-                password: process.env.REDIS_PASSWORD,
-                retryStrategy: (times) => {
-                    return Math.min(times * 50, 2000);
-                }
-            });
+            let subRedisConfig = {};
+
+            // Parse Redis Cloud URL if available
+            if (process.env.REDISCLOUD_URL) {
+                const redisUrl = new URL(process.env.REDISCLOUD_URL);
+                subRedisConfig = {
+                    host: redisUrl.hostname,
+                    port: redisUrl.port,
+                    password: redisUrl.password ? redisUrl.password : undefined,
+                    username: redisUrl.username === 'default' ? undefined : redisUrl.username,
+                    retryStrategy: (times) => {
+                        return Math.min(times * 50, 2000);
+                    }
+                };
+            } else {
+                // Fallback to individual environment variables
+                subRedisConfig = {
+                    host: process.env.REDIS_HOST || 'localhost',
+                    port: process.env.REDIS_PORT || 6379,
+                    password: process.env.REDIS_PASSWORD,
+                    retryStrategy: (times) => {
+                        return Math.min(times * 50, 2000);
+                    }
+                };
+            }
+
+            this.subClient = new Redis(subRedisConfig);
             
             // Subscribe to expiry events
             this.subClient.subscribe('__keyevent@0__:expired');
