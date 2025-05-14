@@ -2,11 +2,27 @@
 // on Heroku, which stores environment variables differently than local development
 
 if (process.env.GOOGLE_PRIVATE_KEY) {
-  // If the key already contains actual newlines, don't modify it
+  console.log('Fixing Google Private Key format for Heroku...');
+  
+  // Check if the key is base64 encoded (Heroku sometimes does this)
+  if (process.env.GOOGLE_PRIVATE_KEY.match(/^[A-Za-z0-9+/=]+$/)) {
+    try {
+      const decoded = Buffer.from(process.env.GOOGLE_PRIVATE_KEY, 'base64').toString('utf8');
+      process.env.GOOGLE_PRIVATE_KEY = decoded;
+      console.log('Successfully decoded base64 private key');
+    } catch (e) {
+      console.error('Failed to decode base64 private key:', e);
+    }
+  }
+  
+  // If the key doesn't contain actual newlines, replace the literal string "\n" with newlines
   if (!process.env.GOOGLE_PRIVATE_KEY.includes('\n')) {
-    console.log('Fixing Google Private Key format for Heroku...');
-    // Replace the literal string "\n" with actual newlines
     process.env.GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n');
+  }
+  
+  // Verify the key format (should start with -----BEGIN PRIVATE KEY-----)
+  if (!process.env.GOOGLE_PRIVATE_KEY.includes('-----BEGIN PRIVATE KEY-----')) {
+    console.error('WARNING: GOOGLE_PRIVATE_KEY does not appear to be in the correct format');
   }
 }
 
@@ -20,11 +36,28 @@ console.log(`- SPREADSHEET_ID: ${process.env.SPREADSHEET_ID ? 'Set' : 'NOT SET'}
 module.exports = {
   getGoogleAuth: () => {
     const { google } = require('googleapis');
-    return new google.auth.JWT(
-      process.env.GOOGLE_CLIENT_EMAIL,
-      null,
-      process.env.GOOGLE_PRIVATE_KEY,
-      ['https://www.googleapis.com/auth/spreadsheets']
-    );
+    
+    try {
+      if (!process.env.GOOGLE_CLIENT_EMAIL) {
+        throw new Error('GOOGLE_CLIENT_EMAIL environment variable is missing');
+      }
+      
+      if (!process.env.GOOGLE_PRIVATE_KEY) {
+        throw new Error('GOOGLE_PRIVATE_KEY environment variable is missing');
+      }
+      
+      console.log('Creating Google JWT client...');
+      const auth = new google.auth.JWT(
+        process.env.GOOGLE_CLIENT_EMAIL,
+        null,
+        process.env.GOOGLE_PRIVATE_KEY,
+        ['https://www.googleapis.com/auth/spreadsheets']
+      );
+      
+      return auth;
+    } catch (error) {
+      console.error('Error creating Google authentication client:', error);
+      throw error;
+    }
   }
 };
