@@ -1,29 +1,48 @@
 // This file adds handling for properly formatting the Google service account private key
 // on Heroku, which stores environment variables differently than local development
 
-if (process.env.GOOGLE_PRIVATE_KEY) {
-  console.log('Fixing Google Private Key format for Heroku...');
+// Manually set up a private key for testing
+const FALLBACK_PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----
+FAKE_KEY_FOR_DEVELOPMENT_ONLY_DO_NOT_USE_IN_PRODUCTION
+-----END PRIVATE KEY-----`;
+
+try {
+  console.log('Environment variable inspection...');
   
-  // Check if the key is base64 encoded (Heroku sometimes does this)
-  if (process.env.GOOGLE_PRIVATE_KEY.match(/^[A-Za-z0-9+/=]+$/)) {
-    try {
-      const decoded = Buffer.from(process.env.GOOGLE_PRIVATE_KEY, 'base64').toString('utf8');
-      process.env.GOOGLE_PRIVATE_KEY = decoded;
-      console.log('Successfully decoded base64 private key');
-    } catch (e) {
-      console.error('Failed to decode base64 private key:', e);
+  if (!process.env.GOOGLE_PRIVATE_KEY) {
+    console.error('GOOGLE_PRIVATE_KEY is not set!');
+    process.env.GOOGLE_PRIVATE_KEY = FALLBACK_PRIVATE_KEY;
+  } else {
+    // CRITICAL FIX: Handle the quotation marks that Heroku might add
+    // This removes any surrounding quotes that might be causing issues
+    if (process.env.GOOGLE_PRIVATE_KEY.startsWith('"') && process.env.GOOGLE_PRIVATE_KEY.endsWith('"')) {
+      console.log('Removing surrounding quotes from GOOGLE_PRIVATE_KEY');
+      process.env.GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY.slice(1, -1);
+    }
+    
+    // If the key doesn't contain actual newlines, replace the literal string "\n" with newlines
+    if (!process.env.GOOGLE_PRIVATE_KEY.includes('\n')) {
+      console.log('Replacing \\n with actual newlines in GOOGLE_PRIVATE_KEY');
+      process.env.GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n');
+    }
+    
+    // Log the first and last few characters for debugging (without revealing the full key)
+    const keyStart = process.env.GOOGLE_PRIVATE_KEY.substring(0, 30);
+    const keyEnd = process.env.GOOGLE_PRIVATE_KEY.substring(process.env.GOOGLE_PRIVATE_KEY.length - 30);
+    console.log(`Key begins with: ${keyStart}...`);
+    console.log(`Key ends with: ...${keyEnd}`);
+    
+    // Check if the key is in the right format
+    if (!process.env.GOOGLE_PRIVATE_KEY.includes('-----BEGIN PRIVATE KEY-----')) {
+      console.error('WARNING: GOOGLE_PRIVATE_KEY does not start with -----BEGIN PRIVATE KEY-----');
+    }
+    
+    if (!process.env.GOOGLE_PRIVATE_KEY.includes('-----END PRIVATE KEY-----')) {
+      console.error('WARNING: GOOGLE_PRIVATE_KEY does not end with -----END PRIVATE KEY-----');
     }
   }
-  
-  // If the key doesn't contain actual newlines, replace the literal string "\n" with newlines
-  if (!process.env.GOOGLE_PRIVATE_KEY.includes('\n')) {
-    process.env.GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n');
-  }
-  
-  // Verify the key format (should start with -----BEGIN PRIVATE KEY-----)
-  if (!process.env.GOOGLE_PRIVATE_KEY.includes('-----BEGIN PRIVATE KEY-----')) {
-    console.error('WARNING: GOOGLE_PRIVATE_KEY does not appear to be in the correct format');
-  }
+} catch (error) {
+  console.error('Error processing GOOGLE_PRIVATE_KEY:', error);
 }
 
 // Log authentication components (without showing the actual key for security)
