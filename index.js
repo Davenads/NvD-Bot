@@ -1,4 +1,6 @@
 require('dotenv').config(); // Load environment variables from .env file
+// Fix Google Auth for Heroku environment
+require('./fixGoogleAuth');
 const { Client, GatewayIntentBits, Collection, MessageFlags } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
@@ -76,5 +78,17 @@ client.on('interactionCreate', async interaction => {
         }
     }
 });
+// Setup a basic HTTP server to satisfy Heroku
+const http = require('http');
+const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('NvD Bot is running!\n');
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});
+
 // Login to Discord with your bot token
 client.login(process.env.BOT_TOKEN);

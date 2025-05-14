@@ -1,15 +1,13 @@
 require('dotenv').config();
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const { google } = require('googleapis');
+// Import the Google auth helper
+const { getGoogleAuth } = require('../fixGoogleAuth');
+
 // Initialize Google Sheets API client
 const sheets = google.sheets({
     version: 'v4',
-    auth: new google.auth.JWT(
-      process.env.GOOGLE_CLIENT_EMAIL,
-      null,
-      process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-      ['https://www.googleapis.com/auth/spreadsheets']
-    )
+    auth: getGoogleAuth()
 });
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const SHEET_NAME = 'NvD Ladder'; // CHANGED: Updated sheet name

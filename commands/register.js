@@ -4,15 +4,13 @@ require('dotenv').config();
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const { google } = require('googleapis');
 const { logError } = require('../logger'); // Import the logger
+// Import the Google auth helper
+const { getGoogleAuth } = require('../fixGoogleAuth');
+
 // Initialize the Google Sheets API client
 const sheets = google.sheets({
     version: 'v4',
-    auth: new google.auth.JWT(
-      process.env.GOOGLE_CLIENT_EMAIL,
-      null,
-      process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-      ['https://www.googleapis.com/auth/spreadsheets']
-    )
+    auth: getGoogleAuth()
   });
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const sheetId = 0; // CHANGED: Numeric sheetId for 'NvD Ladder' tab
