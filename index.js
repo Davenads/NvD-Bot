@@ -31,13 +31,106 @@ for (const file of commandFiles) {
 const { initScheduledTasks } = require('./scheduledTasks');
 
 // Event listener for when the bot becomes ready and online
-client.once('ready', () => {
+client.once('ready', async () => {
     const timestamp = new Date().toLocaleString();
     console.log(`Logged in as ${client.user.tag} at ${timestamp}`);
     
     // Initialize scheduled tasks (complementing Redis auto-null system)
     initScheduledTasks(client);
+    
+    // NEW: Sync existing challenges to Redis on startup
+    await syncExistingChallenges();
 });
+
+// Function to sync existing Google Sheets challenges to Redis
+async function syncExistingChallenges() {
+    try {
+        console.log('🔄 Syncing existing challenges to Redis...');
+        
+        const { google } = require('googleapis');
+        const redisClient = require('./redis-client');
+        
+        const sheets = google.sheets({
+            version: 'v4',
+            auth: new google.auth.JWT(
+                process.env.GOOGLE_CLIENT_EMAIL,
+                null,
+                process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+                ['https://www.googleapis.com/auth/spreadsheets']
+            )
+        });
+        
+        // Fetch current challenges
+        const result = await sheets.spreadsheets.values.get({
+            spreadsheetId: process.env.SPREADSHEET_ID,
+            range: 'NvD Ladder!A2:H'
+        });
+        
+        const rows = result.data.values || [];
+        const challengePlayers = rows.filter(row => 
+            row[2] === 'Challenge' && row[4] && row[5] // Status = Challenge, has opponent and Discord ID
+        );
+        
+        console.log(`📊 Found ${challengePlayers.length} players in active challenges`);
+        
+        if (challengePlayers.length === 0) {
+            console.log('✅ No existing challenges to sync');
+            return;
+        }
+        
+        // Create Redis entries for existing challenges
+        const processedPairs = new Set();
+        let syncedCount = 0;
+        
+        for (const player of challengePlayers) {
+            const rank = player[0];
+            const opponentRank = player[4];
+            const pairKey = [rank, opponentRank].sort().join('-');
+            
+            if (processedPairs.has(pairKey)) continue;
+            
+            const opponent = challengePlayers.find(p => p[0] === opponentRank);
+            if (!opponent || opponent[4] !== rank) continue; // Verify bidirectional
+            
+            processedPairs.add(pairKey);
+            
+            // Check if challenge already exists in Redis
+            const existingChallenge = await redisClient.client.get(`nvd:challenge:${rank}:${opponentRank}`);
+            if (existingChallenge) {
+                console.log(`⏭️ Challenge ${rank} vs ${opponentRank} already exists in Redis`);
+                continue;
+            }
+            
+            // Create challenge and locks
+            const challenger = {
+                discordId: player[5],
+                discordName: player[1],
+                rank: rank
+            };
+            
+            const target = {
+                discordId: opponent[5],
+                discordName: opponent[1], 
+                rank: opponentRank
+            };
+            
+            await redisClient.setChallenge(challenger, target, client);
+            
+            const challengeKey = `nvd:challenge:${rank}:${opponentRank}`;
+            await redisClient.setPlayerLock(player[5], challengeKey);
+            await redisClient.setPlayerLock(opponent[5], challengeKey);
+            
+            syncedCount++;
+            console.log(`✅ Synced challenge: ${player[1]} vs ${opponent[1]}`);
+        }
+        
+        console.log(`🎯 Sync completed: ${syncedCount} challenge pairs synced to Redis`);
+        
+    } catch (error) {
+        console.error('❌ Error syncing existing challenges:', error);
+        // Don't crash the bot if sync fails
+    }
+}
 // Event listener for handling interactions (slash commands and autocomplete)
 client.on('interactionCreate', async interaction => {
     if (interaction.isCommand()) {

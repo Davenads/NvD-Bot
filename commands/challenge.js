@@ -193,6 +193,25 @@ module.exports = {
           content: `You cannot challenge this player yet. Cooldown remains for ${remainingHours} hours.`
         })
       }
+
+      // NEW: Check Redis player locks before validating sheet status
+      console.log('├─ Checking Redis player locks...')
+      const challengerLock = await redisClient.checkPlayerLock(challengerRow[5]) // Discord ID column F
+      const targetLock = await redisClient.checkPlayerLock(targetRow[5]) // Discord ID column F
+
+      if (challengerLock.isLocked) {
+        console.log('└─ Rejected: Challenger is locked in Redis')
+        return await interaction.editReply({
+          content: 'You are already involved in another challenge. Please complete or cancel your current challenge first.'
+        })
+      }
+
+      if (targetLock.isLocked) {
+        console.log('└─ Rejected: Target is locked in Redis')
+        return await interaction.editReply({
+          content: 'Target player is already involved in another challenge.'
+        })
+      }
       // Check availability
       if (challengerRow[2] !== 'Available' || targetRow[2] !== 'Available') { // CHANGED: Status is now column C (index 2)
         console.log('└─ Rejected: Player(s) not available')
@@ -327,6 +346,13 @@ module.exports = {
       // Store challenge in Redis
       await redisClient.setChallenge(challenger, target, interaction.client);
       console.log('├─ Challenge stored in Redis successfully');
+
+      // NEW: Set player locks for both players
+      console.log('├─ Setting player locks...');
+      const challengeKey = `nvd:challenge:${challengerRank}:${targetRank}`;
+      await redisClient.setPlayerLock(challengerRow[5], challengeKey); // Lock challenger
+      await redisClient.setPlayerLock(targetRow[5], challengeKey); // Lock target
+      console.log('├─ Player locks set successfully');
       
       await interaction.editReply({
         content: 'Challenge successfully initiated!'

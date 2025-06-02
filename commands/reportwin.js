@@ -299,6 +299,11 @@ module.exports = {
         // Remove the challenge from Redis
         await redisClient.removeChallenge(winnerRank, loserRank);
         console.log('Challenge removed from Redis successfully');
+
+        // NEW: Remove player locks for both players
+        await redisClient.removePlayerLock(player1.discordId);
+        await redisClient.removePlayerLock(player2.discordId);
+        console.log('Player locks removed successfully');
       } catch (cooldownError) {
         console.error('Error setting cooldown or removing challenge:', cooldownError);
         // Don't throw error here - continue with match reporting even if cooldown fails

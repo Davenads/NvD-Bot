@@ -172,6 +172,12 @@ module.exports = {
         // Store the extended challenge in Redis
         await redisClient.setChallenge(challenger, target, interaction.client);
         console.log('Challenge Redis entry updated with extended expiry');
+
+        // NEW: Update player locks with new challenge key and extended expiry
+        const newChallengeKey = `nvd:challenge:${playerRow[0]}:${opponentRow[0]}`;
+        await redisClient.setPlayerLock(playerDiscordId, newChallengeKey);
+        await redisClient.setPlayerLock(opponentDiscordId, newChallengeKey);
+        console.log('Player locks updated with extended expiry');
       } catch (redisError) {
         console.error('Error updating Redis challenge:', redisError);
         // Continue with the command even if Redis update fails

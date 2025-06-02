@@ -8,8 +8,10 @@ const { EmbedBuilder } = require('discord.js');
 const CHALLENGE_KEY_PREFIX = 'nvd:challenge:';
 const WARNING_KEY_PREFIX = 'nvd:challenge:warning:';
 const COOLDOWN_KEY_PREFIX = 'nvd:cooldown:';
+const PLAYER_LOCK_KEY_PREFIX = 'nvd:player:lock:';
 const CHALLENGE_EXPIRY_TIME = 60 * 60 * 24 * 3; // 3 days in seconds
 const WARNING_EXPIRY_TIME = 60 * 60 * 24 * 2; // 2 days in seconds (warning at 24 hours left)
+const PLAYER_LOCK_EXPIRY_TIME = 60 * 60 * 24 * 3; // 3 days in seconds (same as challenge)
 const NOTIFICATION_CHANNEL_ID = '1144011555378298910'; // NvD challenges channel
 
 class RedisClient {
@@ -420,6 +422,17 @@ class RedisClient {
             
             await channel.send({ embeds: [embed] });
             console.log('Auto-null notification sent successfully');
+
+            // NEW: Remove player locks when challenge auto-expires
+            if (challenge && challenge.challenger && challenge.target) {
+                try {
+                    await this.removePlayerLock(challenge.challenger.discordId);
+                    await this.removePlayerLock(challenge.target.discordId);
+                    console.log('Player locks removed during auto-null');
+                } catch (lockError) {
+                    console.error('Error removing player locks during auto-null:', lockError);
+                }
+            }
             
         } catch (error) {
             console.error('Error handling challenge expiry:', error);
@@ -595,6 +608,135 @@ class RedisClient {
             console.error('Error getting player cooldowns:', error);
             logError(`Error getting player cooldowns: ${error.message}\nStack: ${error.stack}`);
             return [];
+        }
+    }
+
+    // Player Lock Management Methods
+    // Set a lock for a player involved in a challenge
+    async setPlayerLock(discordId, challengeKey) {
+        try {
+            const lockKey = `${PLAYER_LOCK_KEY_PREFIX}${discordId}`;
+            const lockData = JSON.stringify({
+                challengeKey: challengeKey,
+                timestamp: Date.now(),
+                expiryTime: Date.now() + (PLAYER_LOCK_EXPIRY_TIME * 1000)
+            });
+            
+            await this.client.setex(lockKey, PLAYER_LOCK_EXPIRY_TIME, lockData);
+            console.log(`Set player lock for ${discordId} with challenge ${challengeKey}`);
+            return true;
+        } catch (error) {
+            console.error('Error setting player lock:', error);
+            logError(`Error setting player lock: ${error.message}\nStack: ${error.stack}`);
+            return false;
+        }
+    }
+
+    // Remove a player lock
+    async removePlayerLock(discordId) {
+        try {
+            const lockKey = `${PLAYER_LOCK_KEY_PREFIX}${discordId}`;
+            await this.client.del(lockKey);
+            console.log(`Removed player lock for ${discordId}`);
+            return true;
+        } catch (error) {
+            console.error('Error removing player lock:', error);
+            logError(`Error removing player lock: ${error.message}\nStack: ${error.stack}`);
+            return false;
+        }
+    }
+
+    // Check if a player is locked (involved in a challenge)
+    async checkPlayerLock(discordId) {
+        try {
+            const lockKey = `${PLAYER_LOCK_KEY_PREFIX}${discordId}`;
+            const lockData = await this.client.get(lockKey);
+            
+            if (lockData) {
+                const data = JSON.parse(lockData);
+                const ttl = await this.client.ttl(lockKey);
+                return {
+                    isLocked: true,
+                    challengeKey: data.challengeKey,
+                    remainingTime: ttl,
+                    lockData: data
+                };
+            }
+            
+            return {
+                isLocked: false,
+                challengeKey: null,
+                remainingTime: 0,
+                lockData: null
+            };
+        } catch (error) {
+            console.error('Error checking player lock:', error);
+            logError(`Error checking player lock: ${error.message}\nStack: ${error.stack}`);
+            return {
+                isLocked: false,
+                challengeKey: null,
+                remainingTime: 0,
+                lockData: null,
+                error: true
+            };
+        }
+    }
+
+    // Get all active player locks (for debugging)
+    async listAllPlayerLocks() {
+        try {
+            const keys = await this.client.keys(`${PLAYER_LOCK_KEY_PREFIX}*`);
+            const locks = [];
+            
+            for (const key of keys) {
+                const lockData = await this.client.get(key);
+                const ttl = await this.client.ttl(key);
+                
+                if (lockData) {
+                    const data = JSON.parse(lockData);
+                    const discordId = key.replace(PLAYER_LOCK_KEY_PREFIX, '');
+                    locks.push({
+                        discordId: discordId,
+                        challengeKey: data.challengeKey,
+                        remainingTime: ttl,
+                        timestamp: data.timestamp
+                    });
+                }
+            }
+            
+            return locks;
+        } catch (error) {
+            console.error('Error listing player locks:', error);
+            logError(`Error listing player locks: ${error.message}\nStack: ${error.stack}`);
+            return [];
+        }
+    }
+
+    // Clean up orphaned player locks (utility method)
+    async cleanupOrphanedPlayerLocks() {
+        try {
+            const playerLocks = await this.listAllPlayerLocks();
+            const challengeKeys = await this.client.keys(`${CHALLENGE_KEY_PREFIX}*`);
+            
+            // Filter out warning keys to get actual challenge keys
+            const activeChallengeKeys = challengeKeys.filter(key => !key.includes('warning'));
+            
+            let cleanedCount = 0;
+            for (const lock of playerLocks) {
+                // Check if the challenge this lock references still exists
+                if (!activeChallengeKeys.includes(lock.challengeKey)) {
+                    await this.removePlayerLock(lock.discordId);
+                    cleanedCount++;
+                    console.log(`Cleaned orphaned lock for player ${lock.discordId}`);
+                }
+            }
+            
+            console.log(`Cleaned ${cleanedCount} orphaned player locks`);
+            return cleanedCount;
+        } catch (error) {
+            console.error('Error cleaning orphaned player locks:', error);
+            logError(`Error cleaning orphaned player locks: ${error.message}\nStack: ${error.stack}`);
+            return 0;
         }
     }
 }

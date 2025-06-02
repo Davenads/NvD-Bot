@@ -107,6 +107,15 @@ module.exports = {
       await redisClient.removeChallenge(playerRow[0], opponentRow[0]);
       console.log('Challenge removed from Redis successfully');
 
+      // NEW: Remove player locks for both players
+      console.log('Removing player locks...');
+      const playerDiscordId = playerRow[5]; // Discord ID is column F (index 5)
+      const opponentDiscordId = opponentRow[5]; // Discord ID is column F (index 5)
+      
+      await redisClient.removePlayerLock(playerDiscordId);
+      await redisClient.removePlayerLock(opponentDiscordId);
+      console.log('Player locks removed successfully');
+
       const embed = new EmbedBuilder()
         .setTitle('⚔️ Challenge Canceled ⚔️')
         .setDescription(`The challenge between **Rank ${playerRow[0]}** and **Rank ${opponentRow[0]}** has been successfully canceled.`)

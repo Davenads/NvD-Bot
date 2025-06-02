@@ -182,11 +182,18 @@ module.exports = {
                     }
                     // Store challenge details for the embed message
                     const opponentName = rows.find(r => r[0] === challenge.opponent)?.[1] || 'Unknown'; // CHANGED: Discord username is index 1
+                    
+                    // NEW: Also get Discord IDs for player lock cleanup
+                    const playerDiscordId = rows.find(r => r[0] === challenge.playerRank)?.[5]; // Discord ID column F
+                    const opponentDiscordId = rows.find(r => r[0] === challenge.opponent)?.[5]; // Discord ID column F
+                    
                     nullifiedChallenges.push({
                         player: challenge.playerName,
                         playerRank: challenge.playerRank,
+                        playerDiscordId: playerDiscordId,
                         opponent: opponentName,
                         opponentRank: challenge.opponent,
+                        opponentDiscordId: opponentDiscordId,
                         date: challenge.challengeDateStr,
                         daysPast: Math.floor(challenge.daysDiff)
                     });
@@ -198,6 +205,23 @@ module.exports = {
                     resource: { requests }
                 });
                 console.log(`├─ Batch update completed successfully`);
+
+                // NEW: Clean up player locks for nullified challenges
+                console.log('├─ Cleaning up player locks...');
+                const redisClient = require('../redis-client');
+                for (const challenge of nullifiedChallenges) {
+                    try {
+                        if (challenge.playerDiscordId) {
+                            await redisClient.removePlayerLock(challenge.playerDiscordId);
+                        }
+                        if (challenge.opponentDiscordId) {
+                            await redisClient.removePlayerLock(challenge.opponentDiscordId);
+                        }
+                    } catch (lockError) {
+                        console.error(`Error removing player locks for challenge ${challenge.playerRank} vs ${challenge.opponentRank}:`, lockError);
+                    }
+                }
+                console.log('├─ Player locks cleanup completed');
                 // Create embed message
                 const embed = new EmbedBuilder()
                     .setTitle('🛡️ Nullified Old Challenges 🛡️')
