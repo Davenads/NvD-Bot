@@ -203,6 +203,34 @@ module.exports = {
         })
       }
 
+      // NEW: Check if challenger is already someone else's opponent
+      const challengerAlreadyOpponent = rows.some(row => 
+        row[4] === String(challengerRank) && // Challenger rank appears in opponent column
+        parseInt(row[0]) !== targetRank && // But not with current target
+        row[2] === 'Challenge' // And that row is in challenge status
+      );
+
+      if (challengerAlreadyOpponent) {
+        console.log('└─ Rejected: Challenger is already being challenged by someone else')
+        return await interaction.editReply({
+          content: 'You cannot issue a challenge while you are already being challenged by someone else.'
+        })
+      }
+
+      // NEW: Check if target is already someone else's opponent  
+      const targetAlreadyOpponent = rows.some(row => 
+        row[4] === String(targetRank) && // Target rank appears in opponent column
+        parseInt(row[0]) !== challengerRank && // But not with current challenger
+        row[2] === 'Challenge' // And that row is in challenge status
+      );
+
+      if (targetAlreadyOpponent) {
+        console.log('└─ Rejected: Target is already being challenged by someone else')
+        return await interaction.editReply({
+          content: 'Target player is already being challenged by someone else.'
+        })
+      }
+
       // Format challenge date
       const challengeDate = new Date().toLocaleString('en-US', {
         month: 'numeric',

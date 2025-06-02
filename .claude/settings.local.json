@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(node deploy-commands.js)",
+      "Bash(sed:*)"
+    ],
+    "deny": []
+  }
+}
