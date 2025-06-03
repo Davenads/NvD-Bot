@@ -55,7 +55,19 @@ module.exports = {
 
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
+        // Send immediate status update
+        await interaction.editReply({ content: '🔄 Starting Redis sync operation...' });
+
         try {
+            console.log('├─ Testing connections...');
+            
+            // Test Redis connection
+            await redisClient.client.ping();
+            console.log('├─ Redis connection OK');
+            
+            // Update progress
+            await interaction.editReply({ content: '🔄 Connections verified. Fetching ladder data...' });
+            
             console.log('├─ Fetching current ladder data...');
 
             // Fetch data from Google Sheets
@@ -73,6 +85,9 @@ module.exports = {
             );
 
             console.log(`├─ Found ${challengePlayers.length} players in active challenges`);
+
+            // Progress update
+            await interaction.editReply({ content: `🔄 Found ${challengePlayers.length} players in challenges. Processing...` });
 
             if (challengePlayers.length === 0) {
                 const embed = new EmbedBuilder()
@@ -133,6 +148,33 @@ module.exports = {
             }
 
             console.log(`├─ Identified ${challengePairs.length} valid challenge pairs`);
+
+            // For large datasets, process in background and send immediate response
+            if (challengePairs.length > 10 && !dryRun) {
+                // Start background processing
+                setImmediate(async () => {
+                    try {
+                        await processChallengePairsAsync(challengePairs, force, interaction.client);
+                        console.log(`└─ Background sync completed for ${challengePairs.length} pairs`);
+                    } catch (bgError) {
+                        console.error('Background sync error:', bgError);
+                    }
+                });
+
+                // Send immediate response
+                const quickEmbed = new EmbedBuilder()
+                    .setColor('#FFA500')
+                    .setTitle('⚡ Redis Sync Started')
+                    .setDescription(`Found ${challengePairs.length} challenge pairs. Sync is running in background.`)
+                    .addFields({
+                        name: '📝 Note',
+                        value: 'Large sync operation detected. Processing in background to avoid timeout.',
+                        inline: false
+                    })
+                    .setTimestamp();
+
+                return await interaction.editReply({ embeds: [quickEmbed] });
+            }
 
             // Check existing Redis entries
             let existingCount = 0;
@@ -278,6 +320,7 @@ module.exports = {
 
         } catch (error) {
             console.error(`└─ Error in sync command: ${error.message}`);
+            console.error(`└─ Full error:`, error);
             logError(`SyncRedis command error: ${error.message}\nStack: ${error.stack}`);
 
             const errorEmbed = new EmbedBuilder()
