@@ -133,6 +133,11 @@ class RedisClient {
     
     // Store challenge in Redis when created
     async setChallenge(challenger, target, discordClient) {
+        return this.setChallengeWithTTL(challenger, target, discordClient, CHALLENGE_EXPIRY_TIME);
+    }
+
+    // Store challenge in Redis with custom TTL
+    async setChallengeWithTTL(challenger, target, discordClient, customTTL) {
         try {
             // Create challenge key
             const challengeKey = `${CHALLENGE_KEY_PREFIX}${challenger.rank}:${target.rank}`;
@@ -153,14 +158,19 @@ class RedisClient {
                 expiryTime: Date.now() + (CHALLENGE_EXPIRY_TIME * 1000)
             });
             
-            // Store challenge with expiry
-            await this.client.setex(challengeKey, CHALLENGE_EXPIRY_TIME, challengeData);
-            console.log(`Set challenge ${challengeKey} with expiry ${CHALLENGE_EXPIRY_TIME}s`);
+            // Store challenge with custom expiry
+            await this.client.setex(challengeKey, customTTL, challengeData);
+            console.log(`Set challenge ${challengeKey} with expiry ${customTTL}s`);
             
-            // Create warning key to trigger 24 hours before expiry
+            // Create warning key to trigger 24 hours before expiry (if TTL > 24 hours)
             const warningKey = `${WARNING_KEY_PREFIX}${challenger.rank}:${target.rank}`;
-            await this.client.setex(warningKey, WARNING_EXPIRY_TIME, challengeData);
-            console.log(`Set warning ${warningKey} with expiry ${WARNING_EXPIRY_TIME}s`);
+            const warningTTL = Math.max(0, customTTL - (24 * 60 * 60)); // 24 hours before expiry
+            if (warningTTL > 0) {
+                await this.client.setex(warningKey, warningTTL, challengeData);
+                console.log(`Set warning ${warningKey} with expiry ${warningTTL}s`);
+            } else {
+                console.log(`Skipping warning key - TTL too short (${customTTL}s)`);
+            }
             
             return true;
         } catch (error) {
@@ -614,6 +624,11 @@ class RedisClient {
     // Player Lock Management Methods
     // Set a lock for a player involved in a challenge
     async setPlayerLock(discordId, challengeKey) {
+        return this.setPlayerLockWithTTL(discordId, challengeKey, PLAYER_LOCK_EXPIRY_TIME);
+    }
+
+    // Set a player lock with custom TTL
+    async setPlayerLockWithTTL(discordId, challengeKey, customTTL) {
         try {
             const lockKey = `${PLAYER_LOCK_KEY_PREFIX}${discordId}`;
             const lockData = JSON.stringify({
@@ -622,8 +637,8 @@ class RedisClient {
                 expiryTime: Date.now() + (PLAYER_LOCK_EXPIRY_TIME * 1000)
             });
             
-            await this.client.setex(lockKey, PLAYER_LOCK_EXPIRY_TIME, lockData);
-            console.log(`Set player lock for ${discordId} with challenge ${challengeKey}`);
+            await this.client.setex(lockKey, customTTL, lockData);
+            console.log(`Set player lock for ${discordId} with challenge ${challengeKey} (TTL: ${customTTL}s)`);
             return true;
         } catch (error) {
             console.error('Error setting player lock:', error);

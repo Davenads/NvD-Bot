@@ -222,12 +222,55 @@ module.exports = {
                 try {
                     console.log(`├─ SYNC: Creating Redis entries for ${pair.challenger.rank} vs ${pair.target.rank}`);
 
-                    // Set challenge in Redis
-                    await redisClient.setChallenge(pair.challenger, pair.target, interaction.client);
+                    // Calculate remaining time from original challenge date
+                    let customTTL = null;
+                    if (pair.challenger.challengeDate) {
+                        const moment = require('moment-timezone');
+                        const dateFormat = 'M/D, h:mm A';
+                        const cleanDateStr = pair.challenger.challengeDate.replace(/\s+(EST|EDT)$/i, '').trim();
+                        const challengeStart = moment.tz(cleanDateStr, dateFormat, 'America/New_York');
+                        
+                        if (challengeStart.isValid()) {
+                            const now = moment().tz('America/New_York');
+                            const currentYear = now.year();
+                            
+                            // Handle year assignment
+                            if (challengeStart.month() > now.month() || 
+                                (challengeStart.month() === now.month() && challengeStart.date() > now.date())) {
+                                challengeStart.year(currentYear - 1);
+                            } else {
+                                challengeStart.year(currentYear);
+                            }
+                            
+                            const elapsedHours = now.diff(challengeStart, 'hours');
+                            const remainingHours = Math.max(0, (3 * 24) - elapsedHours); // 3 days = 72 hours
+                            
+                            if (remainingHours > 0) {
+                                customTTL = Math.ceil(remainingHours * 3600); // Convert to seconds
+                                console.log(`├─ Custom TTL: ${remainingHours.toFixed(1)} hours remaining (${customTTL}s)`);
+                            } else {
+                                console.log(`├─ WARNING: Challenge is expired (${(-remainingHours).toFixed(1)} hours overdue)`);
+                                // Still sync but with short TTL for cleanup
+                                customTTL = 300; // 5 minutes
+                            }
+                        }
+                    }
 
-                    // Set player locks
-                    await redisClient.setPlayerLock(pair.challenger.discordId, challengeKey);
-                    await redisClient.setPlayerLock(pair.target.discordId, challengeKey);
+                    // Set challenge in Redis with calculated TTL
+                    if (customTTL) {
+                        await redisClient.setChallengeWithTTL(pair.challenger, pair.target, interaction.client, customTTL);
+                    } else {
+                        await redisClient.setChallenge(pair.challenger, pair.target, interaction.client);
+                    }
+
+                    // Set player locks with same TTL
+                    if (customTTL) {
+                        await redisClient.setPlayerLockWithTTL(pair.challenger.discordId, challengeKey, customTTL);
+                        await redisClient.setPlayerLockWithTTL(pair.target.discordId, challengeKey, customTTL);
+                    } else {
+                        await redisClient.setPlayerLock(pair.challenger.discordId, challengeKey);
+                        await redisClient.setPlayerLock(pair.target.discordId, challengeKey);
+                    }
 
                     syncedCount++;
                     syncResults.push({
