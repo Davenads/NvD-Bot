@@ -962,6 +962,24 @@ class RedisClient {
             }
         }
     }
+
+    // Clear all cooldowns (utility method for admin operations)
+    async clearAllCooldowns() {
+        try {
+            const cooldownKeys = await this.client.keys(`${COOLDOWN_KEY_PREFIX}*`);
+            if (cooldownKeys.length > 0) {
+                await this.client.del(...cooldownKeys);
+                console.log(`Cleared ${cooldownKeys.length} cooldown entries`);
+                return { success: true, count: cooldownKeys.length };
+            }
+            console.log('No cooldowns to clear');
+            return { success: true, count: 0 };
+        } catch (error) {
+            console.error('Error clearing all cooldowns:', error);
+            logError(`Error clearing all cooldowns: ${error.message}\nStack: ${error.stack}`);
+            return { success: false, error: error.message, count: 0 };
+        }
+    }
 }
 
 module.exports = new RedisClient();

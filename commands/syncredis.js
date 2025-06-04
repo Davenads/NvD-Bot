@@ -31,6 +31,21 @@ module.exports = {
             option.setName('dry_run')
                 .setDescription('Show what would be synced without making changes')
                 .setRequired(false)
+        )
+        .addBooleanOption(option =>
+            option.setName('cleanup_orphaned')
+                .setDescription('Clean up orphaned Redis data (locks without challenges, etc.)')
+                .setRequired(false)
+        )
+        .addBooleanOption(option =>
+            option.setName('show_cooldowns')
+                .setDescription('Display all current cooldowns for verification')
+                .setRequired(false)
+        )
+        .addBooleanOption(option =>
+            option.setName('clear_cooldowns')
+                .setDescription('Clear all player cooldowns (use when reverting matches)')
+                .setRequired(false)
         ),
 
     async execute(interaction) {
@@ -50,8 +65,11 @@ module.exports = {
 
         const force = interaction.options.getBoolean('force') || false;
         const dryRun = interaction.options.getBoolean('dry_run') || false;
+        const cleanupOrphaned = interaction.options.getBoolean('cleanup_orphaned') || false;
+        const showCooldowns = interaction.options.getBoolean('show_cooldowns') || false;
+        const clearCooldowns = interaction.options.getBoolean('clear_cooldowns') || false;
 
-        console.log(`├─ Options: force=${force}, dry_run=${dryRun}`);
+        console.log(`├─ Options: force=${force}, dry_run=${dryRun}, cleanup_orphaned=${cleanupOrphaned}, show_cooldowns=${showCooldowns}, clear_cooldowns=${clearCooldowns}`);
 
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -89,7 +107,60 @@ module.exports = {
             // Progress update
             await interaction.editReply({ content: `🔄 Found ${challengePlayers.length} players in challenges. Processing...` });
 
-            if (challengePlayers.length === 0) {
+            // Handle cooldown operations first
+            if (showCooldowns || clearCooldowns) {
+                console.log('├─ Processing cooldown operations...');
+                const allCooldowns = await redisClient.listAllCooldowns();
+                
+                if (clearCooldowns && !dryRun) {
+                    console.log(`├─ Clearing ${allCooldowns.length} cooldowns...`);
+                    const clearResult = await redisClient.clearAllCooldowns();
+                    if (clearResult.success) {
+                        console.log(`├─ Successfully cleared ${clearResult.count} cooldown entries`);
+                    } else {
+                        console.error(`├─ Error clearing cooldowns: ${clearResult.error}`);
+                    }
+                }
+
+                if (showCooldowns || dryRun) {
+                    const cooldownEmbed = new EmbedBuilder()
+                        .setColor(clearCooldowns && !dryRun ? '#FF6B6B' : '#FFA500')
+                        .setTitle(clearCooldowns && !dryRun ? '🗑️ Cooldowns Cleared' : '🕒 Current Cooldowns')
+                        .setDescription(
+                            clearCooldowns && !dryRun 
+                                ? `Cleared ${allCooldowns.length} player cooldowns from Redis.`
+                                : `Found ${allCooldowns.length} active cooldowns in Redis.`
+                        )
+                        .setTimestamp();
+
+                    if (allCooldowns.length > 0 && showCooldowns) {
+                        const cooldownList = allCooldowns
+                            .slice(0, 15) // Limit to avoid embed length issues
+                            .map(cd => {
+                                const hours = Math.floor(cd.remainingTime / 3600);
+                                const minutes = Math.floor((cd.remainingTime % 3600) / 60);
+                                return `• ${cd.player1.name} ↔ ${cd.player2.name} (${hours}h ${minutes}m)`;
+                            })
+                            .join('\n');
+
+                        cooldownEmbed.addFields({
+                            name: '🔒 Active Cooldowns',
+                            value: cooldownList + (allCooldowns.length > 15 ? `\n... and ${allCooldowns.length - 15} more` : ''),
+                            inline: false
+                        });
+                    }
+
+                    // If only showing/clearing cooldowns, return early
+                    if (!force && challengePlayers.length === 0) {
+                        return await interaction.editReply({ embeds: [cooldownEmbed] });
+                    }
+
+                    // Add cooldown info to main response later
+                    interaction.cooldownEmbed = cooldownEmbed;
+                }
+            }
+
+            if (challengePlayers.length === 0 && !showCooldowns && !clearCooldowns) {
                 const embed = new EmbedBuilder()
                     .setColor('#00FF00')
                     .setTitle('✅ Redis Sync Complete')
@@ -301,11 +372,11 @@ module.exports = {
             // Create response embed
             const embed = new EmbedBuilder()
                 .setColor(dryRun ? '#FFA500' : (syncedCount > 0 ? '#00FF00' : '#FFFF00'))
-                .setTitle(`${dryRun ? '🔍 Redis Sync Preview' : '✅ Redis Sync Complete'}`)
+                .setTitle(`${dryRun ? '🔍 Redis Sync Preview' : '✅ Redis Sync Complete'}${showCooldowns || clearCooldowns ? ' + Cooldowns' : ''}`)
                 .setDescription(
                     dryRun 
-                        ? `Preview of what would be synced to Redis:`
-                        : `Sync operation completed successfully!`
+                        ? `Preview of what would be synced to Redis:${showCooldowns || clearCooldowns ? ' (including cooldown operations)' : ''}`
+                        : `Sync operation completed successfully!${showCooldowns || clearCooldowns ? ' (including cooldown operations)' : ''}`
                 )
                 .addFields(
                     { name: '📊 Statistics', value: 
@@ -345,21 +416,81 @@ module.exports = {
                 });
             }
 
+            // Cleanup orphaned data if requested
+            let cleanupStats = {
+                orphanedPlayerLocks: 0,
+                orphanedProcessingLocks: 0,
+                staleData: 0
+            };
+
+            if (cleanupOrphaned && !dryRun) {
+                console.log('├─ Performing orphaned data cleanup...');
+                
+                // Clean up orphaned player locks
+                cleanupStats.orphanedPlayerLocks = await redisClient.cleanupOrphanedPlayerLocks();
+                
+                // Clean up any orphaned processing locks (they're temporary anyway)
+                const processingKeys = await redisClient.client.keys('nvd:processing:lock:*');
+                if (processingKeys.length > 0) {
+                    await redisClient.client.del(...processingKeys);
+                    cleanupStats.orphanedProcessingLocks = processingKeys.length;
+                    console.log(`├─ Cleaned ${processingKeys.length} orphaned processing locks`);
+                }
+                
+                // Check for challenges without corresponding player locks and vice versa
+                const allChallenges = await redisClient.listAllChallenges();
+                const allLocks = await redisClient.listAllPlayerLocks();
+                
+                for (const challenge of allChallenges) {
+                    const challengerLock = await redisClient.checkPlayerLock(challenge.challenger.discordId);
+                    const targetLock = await redisClient.checkPlayerLock(challenge.target.discordId);
+                    
+                    if (!challengerLock.isLocked || !targetLock.isLocked) {
+                        console.log(`├─ WARNING: Challenge ${challenge.challenger.rank} vs ${challenge.target.rank} has missing player locks`);
+                        // Could add auto-repair logic here if needed
+                    }
+                }
+                
+                console.log(`├─ Cleanup completed: ${cleanupStats.orphanedPlayerLocks} player locks, ${cleanupStats.orphanedProcessingLocks} processing locks`);
+            }
+
             // Verification info
-            if (!dryRun && syncedCount > 0) {
+            if (!dryRun) {
                 const allLocks = await redisClient.listAllPlayerLocks();
                 const allChallenges = await redisClient.listAllChallenges();
+                const allCooldowns = await redisClient.listAllCooldowns();
+                
+                // Get fresh cooldown count after potential clearing
+                const finalCooldowns = clearCooldowns ? await redisClient.listAllCooldowns() : allCooldowns;
+                
+                let verificationText = `• Total player locks in Redis: **${allLocks.length}**\n• Total challenges in Redis: **${allChallenges.length}**\n• Total cooldowns in Redis: **${finalCooldowns.length}**`;
+                
+                if (cleanupOrphaned) {
+                    verificationText += `\n• Orphaned player locks cleaned: **${cleanupStats.orphanedPlayerLocks}**\n• Processing locks cleaned: **${cleanupStats.orphanedProcessingLocks}**`;
+                }
+                
+                if (clearCooldowns) {
+                    const clearedCount = allCooldowns.length - finalCooldowns.length;
+                    verificationText += `\n• Cooldowns cleared: **${clearedCount}**`;
+                }
                 
                 embed.addFields({
                     name: '🔍 Verification',
-                    value: `• Total player locks in Redis: **${allLocks.length}**\n• Total challenges in Redis: **${allChallenges.length}**`,
+                    value: verificationText,
                     inline: false
                 });
             }
 
             console.log(`└─ Sync command completed: ${syncedCount} synced, ${existingCount} existed, ${skippedCount} errors`);
 
-            await interaction.editReply({ embeds: [embed] });
+            // If we have cooldown operations and other sync operations, send both embeds
+            if (interaction.cooldownEmbed && (syncedCount > 0 || existingCount > 0)) {
+                await interaction.editReply({ 
+                    embeds: [embed, interaction.cooldownEmbed]
+                });
+            } else {
+                await interaction.editReply({ embeds: [embed] });
+            }
 
         } catch (error) {
             console.error(`└─ Error in sync command: ${error.message}`);
