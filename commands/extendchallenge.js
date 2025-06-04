@@ -151,35 +151,64 @@ module.exports = {
       const playerDiscordId = playerRow[5]; // Discord ID is column F (index 5)
       const opponentDiscordId = opponentRow[5]; // Discord ID is column F (index 5)
       
-      // Remove existing challenge from Redis and create a new one with extended expiry
+      // Safely extend challenge with atomic operations and distributed locking
       try {
-        // Remove old challenge
-        await redisClient.removeChallenge(playerRow[0], opponentRow[0]);
+        // First, acquire a processing lock to prevent concurrent modifications
+        const challengeKey = `${playerRow[0]}:${opponentRow[0]}`;
+        const lock = await redisClient.acquireProcessingLock(`extend:${challengeKey}`);
         
-        // Create new challenge
-        const challenger = {
-          discordId: playerDiscordId,
-          discordName: playerDiscUser,
-          rank: playerRow[0]
-        };
-        
-        const target = {
-          discordId: opponentDiscordId,
-          discordName: opponentDiscUser,
-          rank: opponentRow[0]
-        };
-        
-        // Store the extended challenge in Redis
-        await redisClient.setChallenge(challenger, target, interaction.client);
-        console.log('Challenge Redis entry updated with extended expiry');
+        if (!lock.acquired) {
+          console.warn('Could not acquire processing lock for challenge extension - operation may already be in progress');
+          await interaction.editReply({
+            content: 'This challenge is currently being processed by another operation. Please try again in a moment.',
+            ephemeral: true
+          });
+          return;
+        }
 
-        // NEW: Update player locks with new challenge key and extended expiry
-        const newChallengeKey = `nvd:challenge:${playerRow[0]}:${opponentRow[0]}`;
-        await redisClient.setPlayerLock(playerDiscordId, newChallengeKey);
-        await redisClient.setPlayerLock(opponentDiscordId, newChallengeKey);
-        console.log('Player locks updated with extended expiry');
+        try {
+          // Remove old challenge and locks atomically
+          const cleanupResult = await redisClient.atomicChallengeCleanup(
+            playerRow[0], 
+            opponentRow[0], 
+            playerDiscordId, 
+            opponentDiscordId
+          );
+          
+          if (!cleanupResult.success && !cleanupResult.alreadyProcessing) {
+            console.warn('⚠️ Old challenge cleanup had issues, but proceeding with extension:', cleanupResult.errors);
+          }
+          
+          // Create new challenge with extended expiry (using retry for critical operation)
+          const challenger = {
+            discordId: playerDiscordId,
+            discordName: playerDiscUser,
+            rank: playerRow[0]
+          };
+          
+          const target = {
+            discordId: opponentDiscordId,
+            discordName: opponentDiscUser,
+            rank: opponentRow[0]
+          };
+          
+          // Store the extended challenge in Redis
+          await redisClient.setChallenge(challenger, target, interaction.client);
+          console.log('Challenge Redis entry updated with extended expiry');
+
+          // Update player locks with new challenge key and extended expiry
+          const newChallengeKey = `nvd:challenge:${playerRow[0]}:${opponentRow[0]}`;
+          await redisClient.setPlayerLock(playerDiscordId, newChallengeKey);
+          await redisClient.setPlayerLock(opponentDiscordId, newChallengeKey);
+          console.log('Player locks updated with extended expiry');
+          
+        } finally {
+          // Always release the processing lock
+          await redisClient.releaseProcessingLock(lock.lockKey, lock.lockValue);
+        }
+        
       } catch (redisError) {
-        console.error('Error updating Redis challenge:', redisError);
+        console.error('Error extending Redis challenge:', redisError);
         // Continue with the command even if Redis update fails
       }
 

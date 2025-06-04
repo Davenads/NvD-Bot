@@ -274,18 +274,17 @@ async function autoNullChallenges(client) {
 function initScheduledTasks(client) {
   console.log('Initializing scheduled tasks...');
 
-  // Schedule auto-null challenges task to run once daily at midnight
-  // '0 0 * * *' = At 00:00 (midnight) every day
-  cron.schedule('0 0 * * *', () => {
-    console.log('Running daily scheduled auto-null challenges task');
-    autoNullChallenges(client);
-  });
+  // DISABLED: Daily scheduled auto-null to prevent race conditions with Redis TTL system
+  // The Redis TTL expiry system handles challenge auto-nullification automatically
+  console.log('⚠️ Daily scheduled auto-null task is DISABLED to prevent race conditions');
+  console.log('   Auto-nullification is handled by Redis TTL expiry system');
 
-  // Run once at startup to catch any missed challenges during downtime
-  console.log('Running initial auto-null challenges check at startup');
-  autoNullChallenges(client);
+  // DISABLED: Initial startup check to prevent race conditions
+  // The startup sync in index.js now handles existing challenges properly
+  console.log('⚠️ Initial startup auto-null check is DISABLED');
+  console.log('   Startup sync in index.js handles existing challenges');
   
-  console.log('All scheduled tasks initialized');
+  console.log('All scheduled tasks initialized (auto-null tasks disabled)');
 }
 
 module.exports = {

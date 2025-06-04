@@ -206,22 +206,47 @@ module.exports = {
                 });
                 console.log(`├─ Batch update completed successfully`);
 
-                // NEW: Clean up player locks for nullified challenges
-                console.log('├─ Cleaning up player locks...');
+                // NEW: Use atomic cleanup for Redis operations with distributed locking
+                console.log('├─ Performing atomic Redis cleanup...');
                 const redisClient = require('../redis-client');
+                let successfulCleanups = 0;
+                let failedCleanups = [];
+                
                 for (const challenge of nullifiedChallenges) {
                     try {
-                        if (challenge.playerDiscordId) {
-                            await redisClient.removePlayerLock(challenge.playerDiscordId);
+                        const cleanupResult = await redisClient.atomicChallengeCleanup(
+                            challenge.playerRank,
+                            challenge.opponentRank, 
+                            challenge.playerDiscordId,
+                            challenge.opponentDiscordId
+                        );
+                        
+                        if (cleanupResult.success) {
+                            successfulCleanups++;
+                            console.log(`│  ├─ ✅ Redis cleanup successful for ${challenge.playerRank} vs ${challenge.opponentRank}`);
+                        } else if (cleanupResult.alreadyProcessing) {
+                            console.log(`│  ├─ ⏭️ Challenge ${challenge.playerRank} vs ${challenge.opponentRank} already being processed`);
+                            successfulCleanups++; // Count as successful since it's being handled
+                        } else {
+                            failedCleanups.push({
+                                challenge: `${challenge.playerRank} vs ${challenge.opponentRank}`,
+                                errors: cleanupResult.errors
+                            });
+                            console.warn(`│  ├─ ⚠️ Redis cleanup had issues for ${challenge.playerRank} vs ${challenge.opponentRank}:`, cleanupResult.errors);
                         }
-                        if (challenge.opponentDiscordId) {
-                            await redisClient.removePlayerLock(challenge.opponentDiscordId);
-                        }
-                    } catch (lockError) {
-                        console.error(`Error removing player locks for challenge ${challenge.playerRank} vs ${challenge.opponentRank}:`, lockError);
+                    } catch (cleanupError) {
+                        failedCleanups.push({
+                            challenge: `${challenge.playerRank} vs ${challenge.opponentRank}`,
+                            errors: [cleanupError.message]
+                        });
+                        console.error(`│  ├─ ❌ Redis cleanup failed for ${challenge.playerRank} vs ${challenge.opponentRank}:`, cleanupError);
                     }
                 }
-                console.log('├─ Player locks cleanup completed');
+                
+                console.log(`├─ Redis cleanup completed: ${successfulCleanups}/${nullifiedChallenges.length} successful`);
+                if (failedCleanups.length > 0) {
+                    console.warn(`├─ ${failedCleanups.length} Redis cleanups had issues:`, failedCleanups);
+                }
                 // Create embed message
                 const embed = new EmbedBuilder()
                     .setTitle('🛡️ Nullified Old Challenges 🛡️')

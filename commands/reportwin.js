@@ -296,16 +296,22 @@ module.exports = {
           loser: player2.discordId
         });
         
-        // Remove the challenge from Redis
-        await redisClient.removeChallenge(winnerRank, loserRank);
-        console.log('Challenge removed from Redis successfully');
-
-        // NEW: Remove player locks for both players
-        await redisClient.removePlayerLock(player1.discordId);
-        await redisClient.removePlayerLock(player2.discordId);
-        console.log('Player locks removed successfully');
+        // Use atomic cleanup for Redis operations
+        const cleanupResult = await redisClient.atomicChallengeCleanup(
+          winnerRank, 
+          loserRank, 
+          player1.discordId, 
+          player2.discordId
+        );
+        
+        if (cleanupResult.success) {
+          console.log('✅ Atomic Redis cleanup completed successfully');
+        } else {
+          console.warn('⚠️ Redis cleanup had issues but continuing with match reporting:', cleanupResult.errors);
+          // Don't throw error here - continue with match reporting even if cleanup fails
+        }
       } catch (cooldownError) {
-        console.error('Error setting cooldown or removing challenge:', cooldownError);
+        console.error('Error setting cooldown or performing cleanup:', cooldownError);
         // Don't throw error here - continue with match reporting even if cooldown fails
       }
       

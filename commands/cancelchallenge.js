@@ -102,19 +102,26 @@ module.exports = {
       const playerDiscUser = playerRow[1]; // CHANGED: Discord username is now column B (index 1)
       const opponentDiscUser = opponentRow[1]; // CHANGED: Discord username is now column B (index 1)
 
-      // Remove the challenge from Redis
-      console.log('Removing challenge from Redis...');
-      await redisClient.removeChallenge(playerRow[0], opponentRow[0]);
-      console.log('Challenge removed from Redis successfully');
-
-      // NEW: Remove player locks for both players
-      console.log('Removing player locks...');
+      // Use atomic cleanup for Redis operations
+      console.log('Performing atomic Redis cleanup...');
       const playerDiscordId = playerRow[5]; // Discord ID is column F (index 5)
       const opponentDiscordId = opponentRow[5]; // Discord ID is column F (index 5)
       
-      await redisClient.removePlayerLock(playerDiscordId);
-      await redisClient.removePlayerLock(opponentDiscordId);
-      console.log('Player locks removed successfully');
+      const cleanupResult = await redisClient.atomicChallengeCleanup(
+        playerRow[0], 
+        opponentRow[0], 
+        playerDiscordId, 
+        opponentDiscordId
+      );
+      
+      if (cleanupResult.success) {
+        console.log('✅ Atomic Redis cleanup completed successfully');
+      } else if (cleanupResult.alreadyProcessing) {
+        console.log('⏭️ Challenge already being processed by another operation');
+      } else {
+        console.warn('⚠️ Redis cleanup had issues:', cleanupResult.errors);
+        // Continue with cancellation even if Redis cleanup fails
+      }
 
       const embed = new EmbedBuilder()
         .setTitle('⚔️ Challenge Canceled ⚔️')

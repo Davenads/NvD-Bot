@@ -9,9 +9,11 @@ const CHALLENGE_KEY_PREFIX = 'nvd:challenge:';
 const WARNING_KEY_PREFIX = 'nvd:challenge:warning:';
 const COOLDOWN_KEY_PREFIX = 'nvd:cooldown:';
 const PLAYER_LOCK_KEY_PREFIX = 'nvd:player:lock:';
+const PROCESSING_LOCK_KEY_PREFIX = 'nvd:processing:lock:';
 const CHALLENGE_EXPIRY_TIME = 60 * 60 * 24 * 3; // 3 days in seconds
 const WARNING_EXPIRY_TIME = 60 * 60 * 24 * 2; // 2 days in seconds (warning at 24 hours left)
 const PLAYER_LOCK_EXPIRY_TIME = 60 * 60 * 24 * 3; // 3 days in seconds (same as challenge)
+const PROCESSING_LOCK_EXPIRY_TIME = 60 * 5; // 5 minutes for processing operations
 const NOTIFICATION_CHANNEL_ID = '1144011555378298910'; // NvD challenges channel
 
 class RedisClient {
@@ -259,189 +261,203 @@ class RedisClient {
             const keyParts = key.replace(CHALLENGE_KEY_PREFIX, '').split(':');
             const challengerRank = keyParts[0];
             const targetRank = keyParts[1];
+            const challengeKey = `${challengerRank}:${targetRank}`;
             
-            // Log the challenge expiry
-            console.log(`Auto-nulling expired challenge: ${challengerRank} vs ${targetRank}`);
-            
-            // Initialize the Google Sheets API client
-            const sheets = google.sheets({
-                version: 'v4',
-                auth: new google.auth.JWT(
-                  process.env.GOOGLE_CLIENT_EMAIL,
-                  null,
-                  process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-                  ['https://www.googleapis.com/auth/spreadsheets']
-                )
-            });
-            
-            const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
-            const SHEET_NAME = 'NvD Ladder';
-            const sheetId = 0; // Numeric sheetId for 'NvD Ladder' tab
-            
-            // Get the challenge data
-            const challengeData = await this.client.getBuffer(key);
-            let challenge;
-            let challengerRowIndex = -1;
-            let targetRowIndex = -1;
-            
-            // If we have the challenge data in cache, use it
-            if (challengeData) {
-                challenge = JSON.parse(challengeData.toString());
-            }
-            
-            // Fetch data from Google Sheets
-            const result = await sheets.spreadsheets.values.get({
-                spreadsheetId: SPREADSHEET_ID,
-                range: `${SHEET_NAME}!A2:F`
-            });
-            
-            const rows = result.data.values;
-            if (!rows?.length) {
-                console.error('No data found in spreadsheet');
+            // Acquire distributed lock to prevent concurrent processing
+            const lock = await this.acquireProcessingLock(`expiry:${challengeKey}`);
+            if (!lock.acquired) {
+                console.log(`Skipping challenge expiry for ${challengeKey} - already being processed`);
                 return;
             }
-            
-            // Find the rows with matching ranks
-            challengerRowIndex = rows.findIndex(row => parseInt(row[0]) === parseInt(challengerRank));
-            targetRowIndex = rows.findIndex(row => parseInt(row[0]) === parseInt(targetRank));
-            
-            // Add 2 to row indices because our range starts from A2
-            if (challengerRowIndex !== -1) challengerRowIndex += 2;
-            if (targetRowIndex !== -1) targetRowIndex += 2;
-            
-            // If we couldn't get challenge data from Redis, construct it from spreadsheet
-            if (!challenge && challengerRowIndex !== -1 && targetRowIndex !== -1) {
-                // Get player info from spreadsheet
-                const challengerRow = rows[challengerRowIndex - 2];
-                const targetRow = rows[targetRowIndex - 2];
-                
-                challenge = {
-                    challenger: {
-                        name: challengerRow[1], // Discord username in column B
-                        discordId: challengerRow[5], // Discord ID in column F
-                        rank: challengerRow[0]
-                    },
-                    target: {
-                        name: targetRow[1], // Discord username in column B
-                        discordId: targetRow[5], // Discord ID in column F
-                        rank: targetRow[0]
-                    }
-                };
-            }
-            
-            // If we couldn't find the rows or challenge data, abort
-            if (challengerRowIndex === -1 || targetRowIndex === -1 || !challenge) {
-                console.error('Could not find challenge rows in spreadsheet');
-                return;
-            }
-            
-            // Update the spreadsheet - reset statuses to Available
-            let requests = [];
-            
-            // Update challenger row
-            requests.push({
-                updateCells: {
-                    range: {
-                        sheetId: sheetId,
-                        startRowIndex: challengerRowIndex - 1,
-                        endRowIndex: challengerRowIndex,
-                        startColumnIndex: 2, // Column C (Status) is index 2
-                        endColumnIndex: 5 // Through Column E (Opp#) is index 4
-                    },
-                    rows: [{
-                        values: [
-                            { userEnteredValue: { stringValue: 'Available' } }, // Status
-                            { userEnteredValue: { stringValue: '' } }, // Challenge date
-                            { userEnteredValue: { stringValue: '' } } // Opponent
-                        ]
-                    }],
-                    fields: 'userEnteredValue'
-                }
-            });
-            
-            // Update target row
-            requests.push({
-                updateCells: {
-                    range: {
-                        sheetId: sheetId,
-                        startRowIndex: targetRowIndex - 1,
-                        endRowIndex: targetRowIndex,
-                        startColumnIndex: 2, // Column C (Status) is index 2
-                        endColumnIndex: 5 // Through Column E (Opp#) is index 4
-                    },
-                    rows: [{
-                        values: [
-                            { userEnteredValue: { stringValue: 'Available' } }, // Status
-                            { userEnteredValue: { stringValue: '' } }, // Challenge date
-                            { userEnteredValue: { stringValue: '' } } // Opponent
-                        ]
-                    }],
-                    fields: 'userEnteredValue'
-                }
-            });
-            
-            // Execute the updates
-            await sheets.spreadsheets.batchUpdate({
-                spreadsheetId: SPREADSHEET_ID,
-                resource: { requests }
-            });
-            
-            console.log('Successfully reset challenge status in spreadsheet');
-            
-            // Send notification embed
-            const discordClient = global.discordClient;
-            if (!discordClient) {
-                console.error('Discord client not available for sending notification');
-                return;
-            }
-            
-            // Find the notification channel
-            const channel = discordClient.channels.cache.get(NOTIFICATION_CHANNEL_ID);
-            if (!channel) {
-                console.error('Could not find notification channel');
-                return;
-            }
-            
-            // Create the embed
-            const embed = new EmbedBuilder()
-                .setColor('#8A2BE2')
-                .setTitle('🕒 Challenge Auto-Nullified')
-                .setDescription('The following challenge has been automatically nullified after 3 days:')
-                .addFields(
-                    {
-                        name: ':bone: Challenger',
-                        value: `Rank #${challenge.challenger.rank} (<@${challenge.challenger.discordId}>)`,
-                        inline: true
-                    },
-                    {
-                        name: '​',
-                        value: 'VS',
-                        inline: true
-                    },
-                    {
-                        name: ':bear: Challenged',
-                        value: `Rank #${challenge.target.rank} (<@${challenge.target.discordId}>)`,
-                        inline: true
-                    }
-                )
-                .setTimestamp()
-                .setFooter({
-                    text: 'Players are now free to issue new challenges',
-                    iconURL: discordClient.user.displayAvatarURL()
-                });
-            
-            await channel.send({ embeds: [embed] });
-            console.log('Auto-null notification sent successfully');
 
-            // NEW: Remove player locks when challenge auto-expires
-            if (challenge && challenge.challenger && challenge.target) {
-                try {
-                    await this.removePlayerLock(challenge.challenger.discordId);
-                    await this.removePlayerLock(challenge.target.discordId);
-                    console.log('Player locks removed during auto-null');
-                } catch (lockError) {
-                    console.error('Error removing player locks during auto-null:', lockError);
+            try {
+                console.log(`🔒 Auto-nulling expired challenge: ${challengerRank} vs ${targetRank}`);
+                
+                // Initialize the Google Sheets API client
+                const sheets = google.sheets({
+                    version: 'v4',
+                    auth: new google.auth.JWT(
+                      process.env.GOOGLE_CLIENT_EMAIL,
+                      null,
+                      process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+                      ['https://www.googleapis.com/auth/spreadsheets']
+                    )
+                });
+                
+                const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
+                const SHEET_NAME = 'NvD Ladder';
+                const sheetId = 0; // Numeric sheetId for 'NvD Ladder' tab
+                
+                // Get the challenge data
+                const challengeData = await this.client.getBuffer(key);
+                let challenge;
+                let challengerRowIndex = -1;
+                let targetRowIndex = -1;
+                
+                // If we have the challenge data in cache, use it
+                if (challengeData) {
+                    challenge = JSON.parse(challengeData.toString());
                 }
+                
+                // Fetch data from Google Sheets
+                const result = await sheets.spreadsheets.values.get({
+                    spreadsheetId: SPREADSHEET_ID,
+                    range: `${SHEET_NAME}!A2:F`
+                });
+                
+                const rows = result.data.values;
+                if (!rows?.length) {
+                    console.error('No data found in spreadsheet');
+                    return;
+                }
+                
+                // Find the rows with matching ranks
+                challengerRowIndex = rows.findIndex(row => parseInt(row[0]) === parseInt(challengerRank));
+                targetRowIndex = rows.findIndex(row => parseInt(row[0]) === parseInt(targetRank));
+                
+                // Add 2 to row indices because our range starts from A2
+                if (challengerRowIndex !== -1) challengerRowIndex += 2;
+                if (targetRowIndex !== -1) targetRowIndex += 2;
+                
+                // If we couldn't get challenge data from Redis, construct it from spreadsheet
+                if (!challenge && challengerRowIndex !== -1 && targetRowIndex !== -1) {
+                    // Get player info from spreadsheet
+                    const challengerRow = rows[challengerRowIndex - 2];
+                    const targetRow = rows[targetRowIndex - 2];
+                    
+                    challenge = {
+                        challenger: {
+                            name: challengerRow[1], // Discord username in column B
+                            discordId: challengerRow[5], // Discord ID in column F
+                            rank: challengerRow[0]
+                        },
+                        target: {
+                            name: targetRow[1], // Discord username in column B
+                            discordId: targetRow[5], // Discord ID in column F
+                            rank: targetRow[0]
+                        }
+                    };
+                }
+                
+                // If we couldn't find the rows or challenge data, abort
+                if (challengerRowIndex === -1 || targetRowIndex === -1 || !challenge) {
+                    console.error('Could not find challenge rows in spreadsheet');
+                    return;
+                }
+                
+                // Update the spreadsheet - reset statuses to Available
+                let requests = [];
+                
+                // Update challenger row
+                requests.push({
+                    updateCells: {
+                        range: {
+                            sheetId: sheetId,
+                            startRowIndex: challengerRowIndex - 1,
+                            endRowIndex: challengerRowIndex,
+                            startColumnIndex: 2, // Column C (Status) is index 2
+                            endColumnIndex: 5 // Through Column E (Opp#) is index 4
+                        },
+                        rows: [{
+                            values: [
+                                { userEnteredValue: { stringValue: 'Available' } }, // Status
+                                { userEnteredValue: { stringValue: '' } }, // Challenge date
+                                { userEnteredValue: { stringValue: '' } } // Opponent
+                            ]
+                        }],
+                        fields: 'userEnteredValue'
+                    }
+                });
+                
+                // Update target row
+                requests.push({
+                    updateCells: {
+                        range: {
+                            sheetId: sheetId,
+                            startRowIndex: targetRowIndex - 1,
+                            endRowIndex: targetRowIndex,
+                            startColumnIndex: 2, // Column C (Status) is index 2
+                            endColumnIndex: 5 // Through Column E (Opp#) is index 4
+                        },
+                        rows: [{
+                            values: [
+                                { userEnteredValue: { stringValue: 'Available' } }, // Status
+                                { userEnteredValue: { stringValue: '' } }, // Challenge date
+                                { userEnteredValue: { stringValue: '' } } // Opponent
+                            ]
+                        }],
+                        fields: 'userEnteredValue'
+                    }
+                });
+                
+                // Execute the updates
+                await sheets.spreadsheets.batchUpdate({
+                    spreadsheetId: SPREADSHEET_ID,
+                    resource: { requests }
+                });
+                
+                console.log('Successfully reset challenge status in spreadsheet');
+                
+                // Use atomic cleanup for Redis
+                const cleanupResult = await this.atomicChallengeCleanup(
+                    challengerRank, 
+                    targetRank, 
+                    challenge.challenger.discordId, 
+                    challenge.target.discordId
+                );
+                
+                if (!cleanupResult.success) {
+                    console.warn('Redis cleanup had issues during auto-expiry:', cleanupResult.errors);
+                } else {
+                    console.log('✅ Redis cleanup completed successfully during auto-expiry');
+                }
+                
+                // Send notification embed
+                const discordClient = global.discordClient;
+                if (discordClient) {
+                    // Find the notification channel
+                    const channel = discordClient.channels.cache.get(NOTIFICATION_CHANNEL_ID);
+                    if (channel) {
+                        // Create the embed
+                        const embed = new EmbedBuilder()
+                            .setColor('#8A2BE2')
+                            .setTitle('🕒 Challenge Auto-Nullified')
+                            .setDescription('The following challenge has been automatically nullified after 3 days:')
+                            .addFields(
+                                {
+                                    name: ':bone: Challenger',
+                                    value: `Rank #${challenge.challenger.rank} (<@${challenge.challenger.discordId}>)`,
+                                    inline: true
+                                },
+                                {
+                                    name: '​',
+                                    value: 'VS',
+                                    inline: true
+                                },
+                                {
+                                    name: ':bear: Challenged',
+                                    value: `Rank #${challenge.target.rank} (<@${challenge.target.discordId}>)`,
+                                    inline: true
+                                }
+                            )
+                            .setTimestamp()
+                            .setFooter({
+                                text: 'Players are now free to issue new challenges',
+                                iconURL: discordClient.user.displayAvatarURL()
+                            });
+                        
+                        await channel.send({ embeds: [embed] });
+                        console.log('Auto-null notification sent successfully');
+                    } else {
+                        console.error('Could not find notification channel');
+                    }
+                } else {
+                    console.error('Discord client not available for sending notification');
+                }
+                
+            } finally {
+                // Always release the processing lock
+                await this.releaseProcessingLock(lock.lockKey, lock.lockValue);
             }
             
         } catch (error) {
@@ -752,6 +768,198 @@ class RedisClient {
             console.error('Error cleaning orphaned player locks:', error);
             logError(`Error cleaning orphaned player locks: ${error.message}\nStack: ${error.stack}`);
             return 0;
+        }
+    }
+
+    // Distributed locking for processing operations
+    async acquireProcessingLock(challengeKey) {
+        try {
+            const lockKey = `${PROCESSING_LOCK_KEY_PREFIX}${challengeKey}`;
+            const lockValue = `${Date.now()}_${Math.random()}`;
+            
+            // Use SET with NX (only set if key doesn't exist) and EX (expiry)
+            const result = await this.client.set(lockKey, lockValue, 'EX', PROCESSING_LOCK_EXPIRY_TIME, 'NX');
+            
+            if (result === 'OK') {
+                console.log(`Acquired processing lock for ${challengeKey}`);
+                return { acquired: true, lockKey, lockValue };
+            } else {
+                console.log(`Failed to acquire processing lock for ${challengeKey} - already locked`);
+                return { acquired: false, lockKey: null, lockValue: null };
+            }
+        } catch (error) {
+            console.error('Error acquiring processing lock:', error);
+            logError(`Error acquiring processing lock: ${error.message}\nStack: ${error.stack}`);
+            return { acquired: false, lockKey: null, lockValue: null, error: true };
+        }
+    }
+
+    async releaseProcessingLock(lockKey, lockValue) {
+        try {
+            // Use Lua script to atomically check value and delete
+            const luaScript = `
+                if redis.call("get", KEYS[1]) == ARGV[1] then
+                    return redis.call("del", KEYS[1])
+                else
+                    return 0
+                end
+            `;
+            
+            const result = await this.client.eval(luaScript, 1, lockKey, lockValue);
+            
+            if (result === 1) {
+                console.log(`Released processing lock for ${lockKey}`);
+                return true;
+            } else {
+                console.log(`Could not release processing lock for ${lockKey} - value mismatch or already released`);
+                return false;
+            }
+        } catch (error) {
+            console.error('Error releasing processing lock:', error);
+            logError(`Error releasing processing lock: ${error.message}\nStack: ${error.stack}`);
+            return false;
+        }
+    }
+
+    // Atomic challenge cleanup with distributed locking
+    async atomicChallengeCleanup(challengerRank, targetRank, challengerDiscordId, targetDiscordId) {
+        const challengeKey = `${challengerRank}:${targetRank}`;
+        const lock = await this.acquireProcessingLock(challengeKey);
+        
+        if (!lock.acquired) {
+            return { 
+                success: false, 
+                error: 'Could not acquire processing lock - operation may already be in progress',
+                alreadyProcessing: true 
+            };
+        }
+
+        try {
+            // Collect all operations to perform
+            const operations = [];
+            const errors = [];
+
+            // 1. Remove challenge
+            try {
+                await this.removeChallenge(challengerRank, targetRank);
+                console.log(`✓ Removed challenge ${challengerRank} vs ${targetRank}`);
+            } catch (error) {
+                errors.push(`Failed to remove challenge: ${error.message}`);
+            }
+
+            // 2. Remove challenger lock
+            if (challengerDiscordId) {
+                try {
+                    await this.removePlayerLock(challengerDiscordId);
+                    console.log(`✓ Removed challenger lock for ${challengerDiscordId}`);
+                } catch (error) {
+                    errors.push(`Failed to remove challenger lock: ${error.message}`);
+                }
+            }
+
+            // 3. Remove target lock
+            if (targetDiscordId) {
+                try {
+                    await this.removePlayerLock(targetDiscordId);
+                    console.log(`✓ Removed target lock for ${targetDiscordId}`);
+                } catch (error) {
+                    errors.push(`Failed to remove target lock: ${error.message}`);
+                }
+            }
+
+            // Verify cleanup was successful
+            const verification = await this.verifyCleanupComplete(challengerRank, targetRank, challengerDiscordId, targetDiscordId);
+            
+            const result = {
+                success: errors.length === 0 && verification.isClean,
+                errors: errors,
+                verification: verification
+            };
+
+            if (result.success) {
+                console.log(`✅ Atomic cleanup completed successfully for ${challengeKey}`);
+            } else {
+                console.warn(`⚠️ Atomic cleanup had issues for ${challengeKey}:`, errors);
+            }
+
+            return result;
+
+        } finally {
+            // Always release the lock
+            await this.releaseProcessingLock(lock.lockKey, lock.lockValue);
+        }
+    }
+
+    // Verify that cleanup was completed successfully
+    async verifyCleanupComplete(challengerRank, targetRank, challengerDiscordId, targetDiscordId) {
+        try {
+            const results = {};
+            
+            // Check if challenge still exists
+            const challengeKey = `${CHALLENGE_KEY_PREFIX}${challengerRank}:${targetRank}`;
+            const warningKey = `${WARNING_KEY_PREFIX}${challengerRank}:${targetRank}`;
+            
+            results.challengeExists = await this.client.exists(challengeKey) === 1;
+            results.warningExists = await this.client.exists(warningKey) === 1;
+            
+            // Check if player locks still exist
+            if (challengerDiscordId) {
+                const challengerLock = await this.checkPlayerLock(challengerDiscordId);
+                results.challengerLocked = challengerLock.isLocked;
+            } else {
+                results.challengerLocked = false;
+            }
+            
+            if (targetDiscordId) {
+                const targetLock = await this.checkPlayerLock(targetDiscordId);
+                results.targetLocked = targetLock.isLocked;
+            } else {
+                results.targetLocked = false;
+            }
+            
+            // Determine if cleanup is complete
+            results.isClean = !results.challengeExists && 
+                             !results.warningExists && 
+                             !results.challengerLocked && 
+                             !results.targetLocked;
+            
+            if (!results.isClean) {
+                console.warn(`Cleanup verification failed for ${challengerRank} vs ${targetRank}:`, results);
+            }
+            
+            return results;
+            
+        } catch (error) {
+            console.error('Error verifying cleanup:', error);
+            logError(`Error verifying cleanup: ${error.message}\nStack: ${error.stack}`);
+            return {
+                isClean: false,
+                error: error.message,
+                challengeExists: true, // Assume dirty state on error
+                warningExists: true,
+                challengerLocked: true,
+                targetLocked: true
+            };
+        }
+    }
+
+    // Retry wrapper for critical operations
+    async withRetry(operation, maxRetries = 3, backoffMs = 1000) {
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                const result = await operation();
+                return { success: true, result, attempt };
+            } catch (error) {
+                console.warn(`Operation failed on attempt ${attempt}/${maxRetries}:`, error.message);
+                
+                if (attempt === maxRetries) {
+                    return { success: false, error, attempt };
+                }
+                
+                // Exponential backoff
+                const delay = backoffMs * Math.pow(2, attempt - 1);
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
         }
     }
 }
