@@ -51,6 +51,11 @@ module.exports = {
             option.setName('validate_redis')
                 .setDescription('Run comprehensive Redis data validation and repair')
                 .setRequired(false)
+        )
+        .addUserOption(option =>
+            option.setName('fix_player_lock')
+                .setDescription('Fix a specific player\'s stuck lock (mention the Discord user)')
+                .setRequired(false)
         ),
 
     async execute(interaction) {
@@ -74,8 +79,9 @@ module.exports = {
         const showCooldowns = interaction.options.getBoolean('show_cooldowns') || false;
         const clearCooldowns = interaction.options.getBoolean('clear_cooldowns') || false;
         const validateRedis = interaction.options.getBoolean('validate_redis') || false;
+        const fixPlayerLock = interaction.options.getUser('fix_player_lock');
 
-        console.log(`├─ Options: force=${force}, dry_run=${dryRun}, cleanup_orphaned=${cleanupOrphaned}, show_cooldowns=${showCooldowns}, clear_cooldowns=${clearCooldowns}, validate_redis=${validateRedis}`);
+        console.log(`├─ Options: force=${force}, dry_run=${dryRun}, cleanup_orphaned=${cleanupOrphaned}, show_cooldowns=${showCooldowns}, clear_cooldowns=${clearCooldowns}, validate_redis=${validateRedis}, fix_player_lock=${fixPlayerLock?.tag || 'none'}`);
 
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -102,6 +108,107 @@ module.exports = {
 
             const rows = result.data.values || [];
             console.log(`├─ Found ${rows.length} total rows in spreadsheet`);
+            
+            // Handle specific player lock fix if requested
+            if (fixPlayerLock) {
+                console.log(`├─ Fixing player lock for ${fixPlayerLock.tag} (${fixPlayerLock.id})...`);
+                
+                // Find the player in the spreadsheet
+                const playerRow = rows.find(row => row[5] === fixPlayerLock.id); // Discord ID in column F
+                
+                if (!playerRow) {
+                    return await interaction.editReply({
+                        content: `❌ Player ${fixPlayerLock.tag} not found in the NvD ladder.`
+                    });
+                }
+                
+                const playerRank = playerRow[0];
+                const playerStatus = playerRow[2]; // Status in column C
+                const playerName = playerRow[1]; // Discord username in column B
+                
+                // Check current Redis state
+                const playerLock = await redisClient.checkPlayerLock(fixPlayerLock.id);
+                const allChallenges = await redisClient.listAllChallenges();
+                const playerChallenges = allChallenges.filter(c => 
+                    c.challenger.discordId === fixPlayerLock.id || 
+                    c.target.discordId === fixPlayerLock.id
+                );
+                
+                let fixResult = { fixed: [], issues: [] };
+                
+                console.log(`│  ├─ Player: ${playerName} (Rank #${playerRank}, Status: ${playerStatus})`);
+                console.log(`│  ├─ Redis lock: ${playerLock.isLocked ? 'LOCKED' : 'NOT LOCKED'}`);
+                console.log(`│  └─ Active challenges in Redis: ${playerChallenges.length}`);
+                
+                // If player is Available in sheets but locked in Redis, remove the lock
+                if (playerStatus === 'Available' && playerLock.isLocked) {
+                    console.log(`│  ├─ Removing orphaned Redis lock for ${playerName}...`);
+                    await redisClient.removePlayerLock(fixPlayerLock.id);
+                    fixResult.fixed.push(`Removed orphaned Redis lock for ${playerName}`);
+                }
+                
+                // If player has challenges in Redis but is Available in sheets, clean them up
+                if (playerStatus === 'Available' && playerChallenges.length > 0) {
+                    console.log(`│  ├─ Cleaning up ${playerChallenges.length} orphaned challenges...`);
+                    for (const challenge of playerChallenges) {
+                        const cleanupResult = await redisClient.atomicChallengeCleanup(
+                            challenge.challenger.rank,
+                            challenge.target.rank,
+                            challenge.challenger.discordId,
+                            challenge.target.discordId
+                        );
+                        if (cleanupResult.success) {
+                            fixResult.fixed.push(`Cleaned up challenge: ${challenge.challenger.rank} vs ${challenge.target.rank}`);
+                        } else {
+                            fixResult.issues.push(`Failed to clean challenge: ${challenge.challenger.rank} vs ${challenge.target.rank}`);
+                        }
+                    }
+                }
+                
+                // If player is in Challenge status in sheets but has no Redis data, this might be okay
+                if (playerStatus === 'Challenge' && !playerLock.isLocked && playerChallenges.length === 0) {
+                    fixResult.issues.push(`Player shows as 'Challenge' in sheets but has no Redis data - may need manual sync`);
+                }
+                
+                const fixEmbed = new EmbedBuilder()
+                    .setColor(fixResult.issues.length > 0 ? '#FFA500' : '#00FF00')
+                    .setTitle(`🔧 Player Lock Fix: ${playerName}`)
+                    .setDescription(`Diagnosed and fixed Redis issues for ${fixPlayerLock.tag}`)
+                    .addFields(
+                        {
+                            name: '📊 Player Status',
+                            value: `• Rank: #${playerRank}\n• Sheet Status: ${playerStatus}\n• Redis Lock: ${playerLock.isLocked ? 'LOCKED' : 'NOT LOCKED'}\n• Active Challenges: ${playerChallenges.length}`,
+                            inline: false
+                        }
+                    )
+                    .setTimestamp();
+                
+                if (fixResult.fixed.length > 0) {
+                    fixEmbed.addFields({
+                        name: '✅ Fixes Applied',
+                        value: fixResult.fixed.map(fix => `• ${fix}`).join('\n'),
+                        inline: false
+                    });
+                }
+                
+                if (fixResult.issues.length > 0) {
+                    fixEmbed.addFields({
+                        name: '⚠️ Issues Found',
+                        value: fixResult.issues.map(issue => `• ${issue}`).join('\n'),
+                        inline: false
+                    });
+                }
+                
+                console.log(`└─ Player lock fix completed for ${playerName}: ${fixResult.fixed.length} fixes, ${fixResult.issues.length} issues`);
+                
+                // If only fixing player lock, return early
+                if (!force && !showCooldowns && !clearCooldowns && !cleanupOrphaned && !validateRedis) {
+                    return await interaction.editReply({ embeds: [fixEmbed] });
+                }
+                
+                // Store fix embed for later
+                interaction.fixEmbed = fixEmbed;
+            }
             
             // Run Redis validation if requested
             if (validateRedis) {
@@ -570,6 +677,7 @@ module.exports = {
             const embeds = [embed];
             if (interaction.cooldownEmbed) embeds.push(interaction.cooldownEmbed);
             if (interaction.validationEmbed) embeds.push(interaction.validationEmbed);
+            if (interaction.fixEmbed) embeds.push(interaction.fixEmbed);
             
             await interaction.editReply({ embeds: embeds });
 
