@@ -74,14 +74,18 @@ module.exports = {
                 // Skip non-challenge rows or incomplete challenges
                 if (status !== 'Challenge' || !challengeDateStr || !opponent) return;
                 
-                // Handle specific date format: M/D, h:mm AM/PM EST
+                // Handle specific date format: M/D, h:mm AM/PM EST/EDT
                 let challengeDate;
                 const dateFormat = 'M/D, h:mm A';
-                // Remove timezone abbreviation (EST/EDT) before parsing
+                
+                // Extract timezone from the date string
+                const timezoneMatch = challengeDateStr.match(/\s+(EST|EDT)$/i);
+                const detectedTZ = timezoneMatch ? timezoneMatch[1].toUpperCase() : null;
                 const cleanDateStr = challengeDateStr.replace(/\s+(EST|EDT)$/i, '').trim();
                 
-                // Parse with the specific format
+                // Parse in the correct timezone context
                 const parsed = moment.tz(cleanDateStr, dateFormat, DEFAULT_TIMEZONE);
+                console.log(`├─ Parsing challenge date: "${challengeDateStr}" -> detected TZ: ${detectedTZ || 'none'} -> parsed: ${parsed.format()}`);
                 if (parsed.isValid()) {
                     // Handle year for dates (add current year, but handle year boundary cases)
                     const currentYear = now.year();

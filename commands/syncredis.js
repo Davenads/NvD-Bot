@@ -363,8 +363,26 @@ module.exports = {
                     if (pair.challenger.challengeDate) {
                         const moment = require('moment-timezone');
                         const dateFormat = 'M/D, h:mm A';
+                        
+                        // Extract timezone from the date string
+                        const timezoneMatch = pair.challenger.challengeDate.match(/\s+(EST|EDT)$/i);
+                        const detectedTZ = timezoneMatch ? timezoneMatch[1].toUpperCase() : null;
                         const cleanDateStr = pair.challenger.challengeDate.replace(/\s+(EST|EDT)$/i, '').trim();
-                        const challengeStart = moment.tz(cleanDateStr, dateFormat, 'America/New_York');
+                        
+                        // Parse in the correct timezone context
+                        let challengeStart;
+                        if (detectedTZ === 'EDT') {
+                            // EDT is UTC-4, parse as Eastern Daylight Time
+                            challengeStart = moment.tz(cleanDateStr, dateFormat, 'America/New_York');
+                        } else if (detectedTZ === 'EST') {
+                            // EST is UTC-5, parse as Eastern Standard Time
+                            challengeStart = moment.tz(cleanDateStr, dateFormat, 'America/New_York');
+                        } else {
+                            // No timezone specified, assume current NY timezone
+                            challengeStart = moment.tz(cleanDateStr, dateFormat, 'America/New_York');
+                        }
+                        
+                        console.log(`├─ Parsing date: "${pair.challenger.challengeDate}" -> detected TZ: ${detectedTZ || 'none'} -> parsed: ${challengeStart.format()}`);
                         
                         if (challengeStart.isValid()) {
                             const now = moment().tz('America/New_York');
