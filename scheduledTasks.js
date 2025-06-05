@@ -192,6 +192,52 @@ async function autoNullChallenges(client) {
       });
       console.log(`├─ Batch update completed successfully`);
       
+      // NEW: Use atomic cleanup for Redis operations with distributed locking
+      console.log('├─ Performing atomic Redis cleanup...');
+      const redisClient = require('./redis-client');
+      let successfulCleanups = 0;
+      let failedCleanups = [];
+      
+      for (const challenge of validChallengesFound) {
+        try {
+          // Get Discord IDs for atomic cleanup
+          const playerDiscordId = rows.find(r => r[0] === challenge.playerRank)?.[5]; // Discord ID column F
+          const opponentDiscordId = rows.find(r => r[0] === challenge.opponent)?.[5]; // Discord ID column F
+          
+          const cleanupResult = await redisClient.atomicChallengeCleanup(
+            challenge.playerRank,
+            challenge.opponent, 
+            playerDiscordId,
+            opponentDiscordId
+          );
+          
+          if (cleanupResult.success) {
+            successfulCleanups++;
+            console.log(`│  ├─ ✅ Redis cleanup successful for ${challenge.playerRank} vs ${challenge.opponent}`);
+          } else if (cleanupResult.alreadyProcessing) {
+            console.log(`│  ├─ ⏭️ Challenge ${challenge.playerRank} vs ${challenge.opponent} already being processed`);
+            successfulCleanups++; // Count as successful since it's being handled
+          } else {
+            failedCleanups.push({
+              challenge: `${challenge.playerRank} vs ${challenge.opponent}`,
+              errors: cleanupResult.errors
+            });
+            console.warn(`│  ├─ ⚠️ Redis cleanup had issues for ${challenge.playerRank} vs ${challenge.opponent}:`, cleanupResult.errors);
+          }
+        } catch (cleanupError) {
+          failedCleanups.push({
+            challenge: `${challenge.playerRank} vs ${challenge.opponent}`,
+            errors: [cleanupError.message]
+          });
+          console.error(`│  ├─ ❌ Redis cleanup failed for ${challenge.playerRank} vs ${challenge.opponent}:`, cleanupError);
+        }
+      }
+      
+      console.log(`├─ Redis cleanup completed: ${successfulCleanups}/${validChallengesFound.length} successful`);
+      if (failedCleanups.length > 0) {
+        console.warn(`├─ ${failedCleanups.length} Redis cleanups had issues:`, failedCleanups);
+      }
+      
       // Find a suitable announcements channel to post to
       if (client && nullifiedChallenges.length > 0) {
         // Try to find the NVD challenges channel (ID: 1144011555378298910)

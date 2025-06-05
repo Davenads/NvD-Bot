@@ -46,6 +46,11 @@ module.exports = {
             option.setName('clear_cooldowns')
                 .setDescription('Clear all player cooldowns (use when reverting matches)')
                 .setRequired(false)
+        )
+        .addBooleanOption(option =>
+            option.setName('validate_redis')
+                .setDescription('Run comprehensive Redis data validation and repair')
+                .setRequired(false)
         ),
 
     async execute(interaction) {
@@ -68,8 +73,9 @@ module.exports = {
         const cleanupOrphaned = interaction.options.getBoolean('cleanup_orphaned') || false;
         const showCooldowns = interaction.options.getBoolean('show_cooldowns') || false;
         const clearCooldowns = interaction.options.getBoolean('clear_cooldowns') || false;
+        const validateRedis = interaction.options.getBoolean('validate_redis') || false;
 
-        console.log(`├─ Options: force=${force}, dry_run=${dryRun}, cleanup_orphaned=${cleanupOrphaned}, show_cooldowns=${showCooldowns}, clear_cooldowns=${clearCooldowns}`);
+        console.log(`├─ Options: force=${force}, dry_run=${dryRun}, cleanup_orphaned=${cleanupOrphaned}, show_cooldowns=${showCooldowns}, clear_cooldowns=${clearCooldowns}, validate_redis=${validateRedis}`);
 
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -96,6 +102,65 @@ module.exports = {
 
             const rows = result.data.values || [];
             console.log(`├─ Found ${rows.length} total rows in spreadsheet`);
+            
+            // Run Redis validation if requested
+            if (validateRedis) {
+                console.log('├─ Running comprehensive Redis validation...');
+                const validationResult = await redisClient.validateAndRepairRedisData(rows);
+                
+                const validationEmbed = new EmbedBuilder()
+                    .setColor(validationResult.success ? '#00FF00' : '#FF0000')
+                    .setTitle('🔍 Redis Validation Results')
+                    .setDescription(
+                        validationResult.success 
+                            ? 'Redis validation completed successfully!' 
+                            : `Validation failed: ${validationResult.error}`
+                    )
+                    .addFields(
+                        {
+                            name: '📊 Summary',
+                            value: validationResult.summary ? 
+                                `• Challenges: ${validationResult.summary.challenges}\n• Player locks: ${validationResult.summary.playerLocks}\n• Cooldowns: ${validationResult.summary.cooldowns}\n• Issues found: ${validationResult.summary.issuesFound}\n• Repairs made: ${validationResult.summary.repairsMade}` :
+                                'Validation data unavailable',
+                            inline: false
+                        }
+                    )
+                    .setTimestamp();
+                
+                if (validationResult.issues && validationResult.issues.length > 0) {
+                    const issuesList = validationResult.issues
+                        .slice(0, 10)
+                        .map(issue => `• ${issue.type}: ${issue.challenge || issue.discordId || 'N/A'}`)
+                        .join('\n');
+                    
+                    validationEmbed.addFields({
+                        name: '⚠️ Issues Found',
+                        value: issuesList + (validationResult.issues.length > 10 ? `\n... and ${validationResult.issues.length - 10} more` : ''),
+                        inline: false
+                    });
+                }
+                
+                if (validationResult.repairs && validationResult.repairs.length > 0) {
+                    const repairsList = validationResult.repairs
+                        .slice(0, 10)
+                        .map(repair => `• ${repair}`)
+                        .join('\n');
+                    
+                    validationEmbed.addFields({
+                        name: '🔧 Repairs Made',
+                        value: repairsList + (validationResult.repairs.length > 10 ? `\n... and ${validationResult.repairs.length - 10} more` : ''),
+                        inline: false
+                    });
+                }
+                
+                // If only validation was requested, return early
+                if (!force && !showCooldowns && !clearCooldowns && !cleanupOrphaned) {
+                    return await interaction.editReply({ embeds: [validationEmbed] });
+                }
+                
+                // Store validation embed for later
+                interaction.validationEmbed = validationEmbed;
+            }
 
             // Find all active challenges
             const challengePlayers = rows.filter(row => 
@@ -483,14 +548,12 @@ module.exports = {
 
             console.log(`└─ Sync command completed: ${syncedCount} synced, ${existingCount} existed, ${skippedCount} errors`);
 
-            // If we have cooldown operations and other sync operations, send both embeds
-            if (interaction.cooldownEmbed && (syncedCount > 0 || existingCount > 0)) {
-                await interaction.editReply({ 
-                    embeds: [embed, interaction.cooldownEmbed]
-                });
-            } else {
-                await interaction.editReply({ embeds: [embed] });
-            }
+            // Collect all embeds to send
+            const embeds = [embed];
+            if (interaction.cooldownEmbed) embeds.push(interaction.cooldownEmbed);
+            if (interaction.validationEmbed) embeds.push(interaction.validationEmbed);
+            
+            await interaction.editReply({ embeds: embeds });
 
         } catch (error) {
             console.error(`└─ Error in sync command: ${error.message}`);

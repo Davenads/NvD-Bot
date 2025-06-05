@@ -116,14 +116,20 @@ class RedisClient {
             this.subClient.on('message', async (channel, key) => {
                 console.log(`Received expiry event for key: ${key}`);
                 
-                // Handle challenge expiry
+                // Handle challenge expiry - only process if it's a direct challenge key
                 if (key.startsWith(CHALLENGE_KEY_PREFIX) && !key.includes('warning')) {
-                    await this.handleChallengeExpiry(key);
+                    // Add small delay to ensure the key has fully expired
+                    setTimeout(async () => {
+                        await this.handleChallengeExpiry(key);
+                    }, 100);
                 }
                 
                 // Handle warning expiry (time to send warning)
-                if (key.includes('warning')) {
-                    await this.handleWarningExpiry(key);
+                if (key.startsWith(WARNING_KEY_PREFIX)) {
+                    // Add small delay to ensure the key has fully expired
+                    setTimeout(async () => {
+                        await this.handleWarningExpiry(key);
+                    }, 100);
                 }
             });
             
@@ -257,8 +263,20 @@ class RedisClient {
         try {
             console.log(`Processing challenge expiry for key: ${key}`);
             
+            // First verify this key actually expired (prevent duplicate processing)
+            const keyExists = await this.client.exists(key);
+            if (keyExists === 1) {
+                console.log(`Skipping challenge expiry for ${key} - key still exists (not actually expired)`);
+                return;
+            }
+            
             // Extract ranks from the key
             const keyParts = key.replace(CHALLENGE_KEY_PREFIX, '').split(':');
+            if (keyParts.length !== 2) {
+                console.log(`Skipping malformed challenge key: ${key}`);
+                return;
+            }
+            
             const challengerRank = keyParts[0];
             const targetRank = keyParts[1];
             const challengeKey = `${challengerRank}:${targetRank}`;
@@ -978,6 +996,199 @@ class RedisClient {
             console.error('Error clearing all cooldowns:', error);
             logError(`Error clearing all cooldowns: ${error.message}\nStack: ${error.stack}`);
             return { success: false, error: error.message, count: 0 };
+        }
+    }
+
+    // Comprehensive Redis data validation and repair
+    async validateAndRepairRedisData(sheetsData = null) {
+        const issues = [];
+        const repairs = [];
+        
+        try {
+            console.log('🔍 Starting comprehensive Redis data validation...');
+            
+            // 1. Get all Redis data
+            const allChallenges = await this.listAllChallenges();
+            const allPlayerLocks = await this.listAllPlayerLocks();
+            const allCooldowns = await this.listAllCooldowns();
+            
+            console.log(`├─ Found ${allChallenges.length} challenges, ${allPlayerLocks.length} player locks, ${allCooldowns.length} cooldowns`);
+            
+            // 2. Check for orphaned player locks (locks without corresponding challenges)
+            for (const lock of allPlayerLocks) {
+                const correspondingChallenge = allChallenges.find(c => 
+                    lock.challengeKey === `${CHALLENGE_KEY_PREFIX}${c.challenger.rank}:${c.target.rank}` ||
+                    lock.challengeKey === `${CHALLENGE_KEY_PREFIX}${c.target.rank}:${c.challenger.rank}`
+                );
+                
+                if (!correspondingChallenge) {
+                    issues.push({
+                        type: 'orphaned_player_lock',
+                        discordId: lock.discordId,
+                        challengeKey: lock.challengeKey
+                    });
+                    
+                    await this.removePlayerLock(lock.discordId);
+                    repairs.push(`Removed orphaned player lock for ${lock.discordId}`);
+                }
+            }
+            
+            // 3. Check for challenges without corresponding player locks
+            for (const challenge of allChallenges) {
+                const challengerLock = await this.checkPlayerLock(challenge.challenger.discordId);
+                const targetLock = await this.checkPlayerLock(challenge.target.discordId);
+                
+                if (!challengerLock.isLocked) {
+                    issues.push({
+                        type: 'missing_challenger_lock',
+                        challenge: `${challenge.challenger.rank} vs ${challenge.target.rank}`,
+                        discordId: challenge.challenger.discordId
+                    });
+                    
+                    const challengeKey = `${CHALLENGE_KEY_PREFIX}${challenge.challenger.rank}:${challenge.target.rank}`;
+                    await this.setPlayerLock(challenge.challenger.discordId, challengeKey);
+                    repairs.push(`Added missing challenger lock for ${challenge.challenger.discordId}`);
+                }
+                
+                if (!targetLock.isLocked) {
+                    issues.push({
+                        type: 'missing_target_lock',
+                        challenge: `${challenge.challenger.rank} vs ${challenge.target.rank}`,
+                        discordId: challenge.target.discordId
+                    });
+                    
+                    const challengeKey = `${CHALLENGE_KEY_PREFIX}${challenge.challenger.rank}:${challenge.target.rank}`;
+                    await this.setPlayerLock(challenge.target.discordId, challengeKey);
+                    repairs.push(`Added missing target lock for ${challenge.target.discordId}`);
+                }
+            }
+            
+            // 4. Check for expired challenges that should have been auto-nullified
+            const now = Date.now();
+            for (const challenge of allChallenges) {
+                if (challenge.remainingTime <= 0) {
+                    issues.push({
+                        type: 'expired_challenge',
+                        challenge: `${challenge.challenger.rank} vs ${challenge.target.rank}`,
+                        expiredBy: Math.abs(challenge.remainingTime)
+                    });
+                    
+                    // Force cleanup of expired challenge
+                    const cleanupResult = await this.atomicChallengeCleanup(
+                        challenge.challenger.rank,
+                        challenge.target.rank,
+                        challenge.challenger.discordId,
+                        challenge.target.discordId
+                    );
+                    
+                    if (cleanupResult.success) {
+                        repairs.push(`Cleaned up expired challenge ${challenge.challenger.rank} vs ${challenge.target.rank}`);
+                    }
+                }
+            }
+            
+            // 5. If sheets data provided, cross-reference with Google Sheets
+            if (sheetsData) {
+                const activeChallengesInSheets = sheetsData.filter(row => 
+                    row[2] === 'Challenge' && row[4] // Status = Challenge and has opponent
+                );
+                
+                // Check for challenges in Redis not in Sheets
+                for (const challenge of allChallenges) {
+                    const foundInSheets = activeChallengesInSheets.find(row => 
+                        (row[0] === challenge.challenger.rank.toString() && row[4] === challenge.target.rank.toString()) ||
+                        (row[0] === challenge.target.rank.toString() && row[4] === challenge.challenger.rank.toString())
+                    );
+                    
+                    if (!foundInSheets) {
+                        issues.push({
+                            type: 'redis_challenge_not_in_sheets',
+                            challenge: `${challenge.challenger.rank} vs ${challenge.target.rank}`
+                        });
+                        
+                        // Clean up Redis challenge not in sheets
+                        const cleanupResult = await this.atomicChallengeCleanup(
+                            challenge.challenger.rank,
+                            challenge.target.rank,
+                            challenge.challenger.discordId,
+                            challenge.target.discordId
+                        );
+                        
+                        if (cleanupResult.success) {
+                            repairs.push(`Removed Redis challenge not found in sheets: ${challenge.challenger.rank} vs ${challenge.target.rank}`);
+                        }
+                    }
+                }
+                
+                // Check for challenges in Sheets not in Redis
+                const challengePairs = new Map();
+                activeChallengesInSheets.forEach(row => {
+                    const rank = row[0];
+                    const opponent = row[4];
+                    const pairKey = [rank, opponent].sort().join('-');
+                    
+                    if (!challengePairs.has(pairKey)) {
+                        challengePairs.set(pairKey, {
+                            rank1: rank,
+                            rank2: opponent,
+                            players: [row]
+                        });
+                    } else {
+                        challengePairs.get(pairKey).players.push(row);
+                    }
+                });
+                
+                for (const [pairKey, pair] of challengePairs) {
+                    if (pair.players.length === 2) { // Valid bidirectional challenge
+                        const foundInRedis = allChallenges.find(c => 
+                            (c.challenger.rank.toString() === pair.rank1 && c.target.rank.toString() === pair.rank2) ||
+                            (c.challenger.rank.toString() === pair.rank2 && c.target.rank.toString() === pair.rank1)
+                        );
+                        
+                        if (!foundInRedis) {
+                            issues.push({
+                                type: 'sheets_challenge_not_in_redis',
+                                challenge: `${pair.rank1} vs ${pair.rank2}`
+                            });
+                            
+                            // Note: Don't auto-sync here, let admin decide
+                            repairs.push(`Found challenge in sheets not in Redis: ${pair.rank1} vs ${pair.rank2} (needs manual sync)`);
+                        }
+                    }
+                }
+            }
+            
+            // 6. Clean up any stale processing locks
+            const processingKeys = await this.client.keys(`${PROCESSING_LOCK_KEY_PREFIX}*`);
+            if (processingKeys.length > 0) {
+                await this.client.del(...processingKeys);
+                repairs.push(`Cleaned ${processingKeys.length} stale processing locks`);
+            }
+            
+            console.log(`✅ Validation completed: ${issues.length} issues found, ${repairs.length} repairs made`);
+            
+            return {
+                success: true,
+                issues: issues,
+                repairs: repairs,
+                summary: {
+                    challenges: allChallenges.length,
+                    playerLocks: allPlayerLocks.length,
+                    cooldowns: allCooldowns.length,
+                    issuesFound: issues.length,
+                    repairsMade: repairs.length
+                }
+            };
+            
+        } catch (error) {
+            console.error('Error during Redis validation:', error);
+            logError(`Redis validation error: ${error.message}\nStack: ${error.stack}`);
+            return {
+                success: false,
+                error: error.message,
+                issues: issues,
+                repairs: repairs
+            };
         }
     }
 }
