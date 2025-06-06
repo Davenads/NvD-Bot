@@ -48,12 +48,20 @@ class RedisClient {
         this.client = new Redis(redisConfig);
 
         this.client.on('error', (err) => {
-            console.error('Redis Client Error:', err);
+            console.error('❌ Redis Client Error:', err.message);
             logError(`Redis Client Error: ${err.message}\nStack: ${err.stack}`);
         });
 
         this.client.on('connect', () => {
-            console.log('Redis Client Connected');
+            console.log('✅ Redis Client Connected');
+        });
+        
+        this.client.on('reconnecting', (delay) => {
+            console.log(`🔄 Redis reconnecting in ${delay}ms...`);
+        });
+        
+        this.client.on('end', () => {
+            console.log('🔌 Redis connection ended');
         });
         
         // Set up the expiry event listener if not already configured
@@ -140,7 +148,9 @@ class RedisClient {
     // Key format: `nvd:challenge:${player1Rank}-${player2Rank}` (sorted order like SvS-Bot-2)
     generateChallengeKey(player1Rank, player2Rank) {
         const pair = [String(player1Rank), String(player2Rank)].sort();
-        return `${CHALLENGE_KEY_PREFIX}${pair[0]}-${pair[1]}`;
+        const key = `${CHALLENGE_KEY_PREFIX}${pair[0]}-${pair[1]}`;
+        console.log(`Generated challenge key: ${key} (ranks: ${player1Rank} vs ${player2Rank})`);
+        return key;
     }
 
     // Store challenge in Redis - matches SvS-Bot-2 pattern with nvd namespace
@@ -478,7 +488,9 @@ class RedisClient {
             `${player1.discordId}`,
             `${player2.discordId}`
         ].sort(); // Sort to ensure consistent key regardless of order
-        return `${COOLDOWN_KEY_PREFIX}${pair[0]}:${pair[1]}`;
+        const key = `${COOLDOWN_KEY_PREFIX}${pair[0]}:${pair[1]}`;
+        console.log(`Generated cooldown key: ${key}`);
+        return key;
     }
 
     async setCooldown(player1, player2) {
@@ -516,20 +528,24 @@ class RedisClient {
             if (cooldownData) {
                 const ttl = await this.client.ttl(key);
                 const data = JSON.parse(cooldownData);
+                const hoursRemaining = Math.floor(ttl / 3600);
+                const minutesRemaining = Math.floor((ttl % 3600) / 60);
+                console.log(`Cooldown active: ${key} | TTL: ${ttl}s (${hoursRemaining}h ${minutesRemaining}m)`);
                 return {
                     onCooldown: true,
                     remainingTime: ttl,
                     details: data
                 };
             }
+            console.log(`No cooldown found for key: ${key}`);
             return {
                 onCooldown: false,
                 remainingTime: 0,
                 details: null
             };
         } catch (error) {
-            console.error('Error checking cooldown:', error);
-            logError(`Error checking cooldown: ${error.message}\nStack: ${error.stack}`);
+            console.error(`Error checking cooldown ${key}:`, error);
+            logError(`Error checking cooldown ${key}: ${error.message}\nStack: ${error.stack}`);
             return {
                 onCooldown: false,
                 remainingTime: 0,
@@ -562,20 +578,24 @@ class RedisClient {
             if (challengeData) {
                 const ttl = await this.client.ttl(key);
                 const data = JSON.parse(challengeData);
+                const hoursRemaining = Math.floor(ttl / 3600);
+                const minutesRemaining = Math.floor((ttl % 3600) / 60);
+                console.log(`Challenge found: ${key} | TTL: ${ttl}s (${hoursRemaining}h ${minutesRemaining}m)`);
                 return {
                     active: true,
                     remainingTime: ttl,
                     details: data
                 };
             }
+            console.log(`No challenge found for key: ${key}`);
             return {
                 active: false,
                 remainingTime: 0,
                 details: null
             };
         } catch (error) {
-            console.error('Error checking challenge:', error);
-            logError(`Error checking challenge: ${error.message}\nStack: ${error.stack}`);
+            console.error(`Error checking challenge ${key}:`, error);
+            logError(`Error checking challenge ${key}: ${error.message}\nStack: ${error.stack}`);
             return {
                 active: false,
                 remainingTime: 0,
@@ -668,6 +688,35 @@ class RedisClient {
             console.error('Error getting player cooldowns:', error);
             logError(`Error getting player cooldowns: ${error.message}\nStack: ${error.stack}`);
             return [];
+        }
+    }
+
+    // Utility method for debugging Redis state
+    async logRedisStatus() {
+        try {
+            const challenges = await this.getAllChallenges();
+            const cooldowns = await this.listAllCooldowns();
+            const challengeKeys = await this.client.keys('nvd:challenge:*');
+            const warningKeys = await this.client.keys('nvd:challenge-warning:*');
+            const cooldownKeys = await this.client.keys('nvd:cooldown:*');
+            
+            console.log('📊 Redis Status Summary:');
+            console.log(`  • Active challenges: ${challenges.length}`);
+            console.log(`  • Challenge keys: ${challengeKeys.length}`);
+            console.log(`  • Warning keys: ${warningKeys.length}`);
+            console.log(`  • Active cooldowns: ${cooldowns.length}`);
+            console.log(`  • Cooldown keys: ${cooldownKeys.length}`);
+            
+            return {
+                challenges: challenges.length,
+                challengeKeys: challengeKeys.length,
+                warningKeys: warningKeys.length,
+                cooldowns: cooldowns.length,
+                cooldownKeys: cooldownKeys.length
+            };
+        } catch (error) {
+            console.error('❌ Error getting Redis status:', error);
+            return null;
         }
     }
 }

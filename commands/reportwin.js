@@ -288,6 +288,7 @@ module.exports = {
       // Set cooldown in Redis and remove challenge
       try {
         // Set cooldown between players
+        console.log(`Setting 24h cooldown between ${winnerDetails.discordName} and ${loserDetails.discordName}`);
         await redisClient.setCooldown(player1, player2);
         console.log('Cooldown set successfully for match:', {
           winner: player1.discordId,
@@ -295,6 +296,7 @@ module.exports = {
         });
         
         // Simple Redis cleanup like SvS-Bot-2
+        console.log(`Removing challenge from Redis: ranks ${winnerRank} vs ${loserRank}`);
         await redisClient.removeChallenge(winnerRank, loserRank);
         console.log('✅ Redis cleanup completed successfully');
           console.warn('⚠️ Redis cleanup had issues but continuing with match reporting:', cleanupResult.errors);

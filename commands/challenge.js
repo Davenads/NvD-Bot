@@ -199,7 +199,8 @@ module.exports = {
       const existingChallenge = await redisClient.checkChallenge(challengerRank, targetRank);
       
       if (existingChallenge.active) {
-        console.log('└─ Rejected: Challenge already exists between these players')
+        const hoursRemaining = Math.floor(existingChallenge.remainingTime / 3600);
+        console.log(`└─ Rejected: Challenge already exists (${hoursRemaining}h remaining)`);
         return await interaction.editReply({
           content: 'A challenge already exists between these players.'
         })
@@ -336,6 +337,7 @@ module.exports = {
       };
       
       // Store challenge in Redis (simplified like SvS-Bot-2)
+      console.log(`├─ Storing challenge in Redis: ${challenger.discordName} (${challengerRank}) vs ${target.discordName} (${targetRank})`);
       await redisClient.setChallenge(challenger, target, challengeDate);
       console.log('├─ Challenge stored in Redis successfully');
       
