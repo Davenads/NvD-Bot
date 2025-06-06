@@ -201,13 +201,28 @@ class RedisClient {
         const warningKey = `${WARNING_KEY_PREFIX}${key.substring(13)}`; // Remove 'nvd:challenge:' prefix
         
         try {
+            console.log(`Attempting to remove challenge keys for ${player1Rank} vs ${player2Rank}`);
+            console.log(`  Challenge key: ${key}`);
+            console.log(`  Warning key: ${warningKey}`);
+            
+            // Check if keys exist before deletion
+            const challengeExists = await this.client.exists(key);
+            const warningExists = await this.client.exists(warningKey);
+            
+            console.log(`  Challenge key exists: ${challengeExists ? 'Yes' : 'No'}`);
+            console.log(`  Warning key exists: ${warningExists ? 'Yes' : 'No'}`);
+            
             // Remove both the challenge key and warning key
-            await this.client.del(key);
-            await this.client.del(warningKey);
-            console.log(`Removed challenge and warning for ${key}`);
+            const challengeDeleted = await this.client.del(key);
+            const warningDeleted = await this.client.del(warningKey);
+            
+            console.log(`  Challenge key deleted: ${challengeDeleted}`);
+            console.log(`  Warning key deleted: ${warningDeleted}`);
+            console.log(`✅ Successfully removed challenge and warning for ${key}`);
+            
             return true;
         } catch (error) {
-            console.error('Error removing challenge:', error);
+            console.error('❌ Error removing challenge:', error);
             logError(`Error removing challenge: ${error.message}\nStack: ${error.stack}`);
             return false;
         }
@@ -220,6 +235,11 @@ class RedisClient {
             
             // Extract ranks from the key (format: nvd:challenge-warning:rank1-rank2)
             const keyParts = key.replace(WARNING_KEY_PREFIX, '').split('-');
+            if (keyParts.length !== 2) {
+                console.log(`Skipping malformed warning key: ${key}`);
+                return;
+            }
+            
             const challengerRank = keyParts[0];
             const targetRank = keyParts[1];
             
@@ -238,11 +258,18 @@ class RedisClient {
             const challengeData = await this.client.get(challengeKey);
             
             if (!challengeData) {
-                console.log('Challenge no longer exists, skipping warning');
+                console.log(`Challenge no longer exists for ${challengerRank} vs ${targetRank}, skipping warning`);
                 return;
             }
             
             const challenge = JSON.parse(challengeData);
+            
+            // Double-check that the challenge key still exists with TTL
+            const challengeTTL = await this.client.ttl(challengeKey);
+            if (challengeTTL <= 0) {
+                console.log(`Challenge key ${challengeKey} has no TTL or has expired, skipping warning`);
+                return;
+            }
             
             // Find the notification channel
             const channel = discordClient.channels.cache.get(NOTIFICATION_CHANNEL_ID);
@@ -251,10 +278,12 @@ class RedisClient {
                 return;
             }
             
+            console.log(`Sending warning for active challenge: ${challengerRank} vs ${targetRank} (TTL: ${challengeTTL}s)`);
+            
             // Send warning message (direct mention, not embed)
             await channel.send(
                 `⚠️ **Challenge Expiry Warning** ⚠️\n` +
-                `<@${challenge.challenger.discordId}> and <@${challenge.target.discordId}>, your challenge will automatically expire in 24 hours! ` +
+                `<@${challenge.player1.discordId}> and <@${challenge.player2.discordId}>, your challenge will automatically expire in 24 hours! ` +
                 `Please complete your match or use \`/nvd-extendchallenge\` if you need more time.`
             );
             
