@@ -4,12 +4,10 @@ const { logError } = require('./logger');
 const { google } = require('googleapis');
 const { EmbedBuilder } = require('discord.js');
 
-// Constants for Redis keys
+// Constants for Redis keys - keep nvd: prefix for namespace separation but simplify structure
 const CHALLENGE_KEY_PREFIX = 'nvd:challenge:';
-const WARNING_KEY_PREFIX = 'nvd:challenge:warning:';
+const WARNING_KEY_PREFIX = 'nvd:challenge-warning:';
 const COOLDOWN_KEY_PREFIX = 'nvd:cooldown:';
-const PLAYER_LOCK_KEY_PREFIX = 'nvd:player:lock:';
-const PROCESSING_LOCK_KEY_PREFIX = 'nvd:processing:lock:';
 const CHALLENGE_EXPIRY_TIME = 60 * 60 * 24 * 3; // 3 days in seconds
 const WARNING_EXPIRY_TIME = 60 * 60 * 24 * 2; // 2 days in seconds (warning at 24 hours left)
 const PLAYER_LOCK_EXPIRY_TIME = 60 * 60 * 24 * 3; // 3 days in seconds (same as challenge)
@@ -116,8 +114,8 @@ class RedisClient {
             this.subClient.on('message', async (channel, key) => {
                 console.log(`Received expiry event for key: ${key}`);
                 
-                // Handle challenge expiry - only process if it's a direct challenge key
-                if (key.startsWith(CHALLENGE_KEY_PREFIX) && !key.includes('warning')) {
+                // Handle challenge expiry - only process nvd challenge keys
+                if (key.startsWith(CHALLENGE_KEY_PREFIX)) {
                     // Add small delay to ensure the key has fully expired
                     setTimeout(async () => {
                         await this.handleChallengeExpiry(key);
@@ -139,46 +137,45 @@ class RedisClient {
         }
     }
     
-    // Store challenge in Redis when created
-    async setChallenge(challenger, target, discordClient) {
-        return this.setChallengeWithTTL(challenger, target, discordClient, CHALLENGE_EXPIRY_TIME);
+    // Key format: `nvd:challenge:${player1Rank}-${player2Rank}` (sorted order like SvS-Bot-2)
+    generateChallengeKey(player1Rank, player2Rank) {
+        const pair = [String(player1Rank), String(player2Rank)].sort();
+        return `${CHALLENGE_KEY_PREFIX}${pair[0]}-${pair[1]}`;
     }
 
-    // Store challenge in Redis with custom TTL
-    async setChallengeWithTTL(challenger, target, discordClient, customTTL) {
+    // Store challenge in Redis - matches SvS-Bot-2 pattern with nvd namespace
+    async setChallenge(player1, player2, challengeDate) {
+        const key = this.generateChallengeKey(player1.rank, player2.rank);
+        // 3 days expiry (259,200 seconds)
+        const expiryTime = 3 * 24 * 60 * 60;
+        // 24 hours before expiration (for warning) - 2 days
+        const warningTime = 2 * 24 * 60 * 60;
+        
+        const challengeData = JSON.stringify({
+            player1: {
+                discordId: player1.discordId,
+                name: player1.discordName,
+                rank: player1.rank
+            },
+            player2: {
+                discordId: player2.discordId,
+                name: player2.discordName,
+                rank: player2.rank
+            },
+            challengeDate: challengeDate,
+            startTime: Date.now(),
+            expiryTime: Date.now() + (expiryTime * 1000)
+        });
+        
         try {
-            // Create challenge key
-            const challengeKey = `${CHALLENGE_KEY_PREFIX}${challenger.rank}:${target.rank}`;
+            // Set the main challenge with expiration
+            await this.client.setex(key, expiryTime, challengeData);
+            console.log(`Set challenge for ${key} with expiry ${expiryTime}s`);
             
-            // Challenge data to store
-            const challengeData = JSON.stringify({
-                challenger: {
-                    discordId: challenger.discordId,
-                    name: challenger.discordName,
-                    rank: challenger.rank
-                },
-                target: {
-                    discordId: target.discordId,
-                    name: target.discordName,
-                    rank: target.rank
-                },
-                startTime: Date.now(),
-                expiryTime: Date.now() + (CHALLENGE_EXPIRY_TIME * 1000)
-            });
-            
-            // Store challenge with custom expiry
-            await this.client.setex(challengeKey, customTTL, challengeData);
-            console.log(`Set challenge ${challengeKey} with expiry ${customTTL}s`);
-            
-            // Create warning key to trigger 24 hours before expiry (if TTL > 24 hours)
-            const warningKey = `${WARNING_KEY_PREFIX}${challenger.rank}:${target.rank}`;
-            const warningTTL = Math.max(0, customTTL - (24 * 60 * 60)); // 24 hours before expiry
-            if (warningTTL > 0) {
-                await this.client.setex(warningKey, warningTTL, challengeData);
-                console.log(`Set warning ${warningKey} with expiry ${warningTTL}s`);
-            } else {
-                console.log(`Skipping warning key - TTL too short (${customTTL}s)`);
-            }
+            // Set a separate key for the warning (expires 24 hours before the main challenge)
+            const warningKey = `${WARNING_KEY_PREFIX}${key.substring(13)}`; // Remove 'nvd:challenge:' prefix
+            await this.client.setex(warningKey, warningTime, key);
+            console.log(`Set warning for ${warningKey} with expiry ${warningTime}s`);
             
             return true;
         } catch (error) {
@@ -189,14 +186,15 @@ class RedisClient {
     }
     
     // Remove challenge from Redis (used when a challenge is completed or manually cancelled)
-    async removeChallenge(challengerRank, targetRank) {
+    async removeChallenge(player1Rank, player2Rank) {
+        const key = this.generateChallengeKey(player1Rank, player2Rank);
+        const warningKey = `${WARNING_KEY_PREFIX}${key.substring(13)}`; // Remove 'nvd:challenge:' prefix
+        
         try {
-            const challengeKey = `${CHALLENGE_KEY_PREFIX}${challengerRank}:${targetRank}`;
-            const warningKey = `${WARNING_KEY_PREFIX}${challengerRank}:${targetRank}`;
-            
-            await this.client.del(challengeKey);
+            // Remove both the challenge key and warning key
+            await this.client.del(key);
             await this.client.del(warningKey);
-            console.log(`Removed challenge keys: ${challengeKey}, ${warningKey}`);
+            console.log(`Removed challenge and warning for ${key}`);
             return true;
         } catch (error) {
             console.error('Error removing challenge:', error);
@@ -210,8 +208,8 @@ class RedisClient {
         try {
             console.log(`Processing warning expiry for key: ${key}`);
             
-            // Extract ranks from the key
-            const keyParts = key.replace(WARNING_KEY_PREFIX, '').split(':');
+            // Extract ranks from the key (format: nvd:challenge-warning:rank1-rank2)
+            const keyParts = key.replace(WARNING_KEY_PREFIX, '').split('-');
             const challengerRank = keyParts[0];
             const targetRank = keyParts[1];
             
@@ -226,7 +224,7 @@ class RedisClient {
             }
             
             // Get the challenge data from the main challenge key
-            const challengeKey = `${CHALLENGE_KEY_PREFIX}${challengerRank}:${targetRank}`;
+            const challengeKey = this.generateChallengeKey(challengerRank, targetRank);
             const challengeData = await this.client.get(challengeKey);
             
             if (!challengeData) {
@@ -270,8 +268,8 @@ class RedisClient {
                 return;
             }
             
-            // Extract ranks from the key
-            const keyParts = key.replace(CHALLENGE_KEY_PREFIX, '').split(':');
+            // Extract ranks from the key (format: nvd:challenge:rank1-rank2)
+            const keyParts = key.replace(CHALLENGE_KEY_PREFIX, '').split('-');
             if (keyParts.length !== 2) {
                 console.log(`Skipping malformed challenge key: ${key}`);
                 return;
@@ -279,7 +277,7 @@ class RedisClient {
             
             const challengerRank = keyParts[0];
             const targetRank = keyParts[1];
-            const challengeKey = `${challengerRank}:${targetRank}`;
+            const challengeKey = `${challengerRank}-${targetRank}`;
             
             // Acquire distributed lock to prevent concurrent processing
             const lock = await this.acquireProcessingLock(`expiry:${challengeKey}`);
@@ -317,10 +315,10 @@ class RedisClient {
                     challenge = JSON.parse(challengeData.toString());
                 }
                 
-                // Fetch data from Google Sheets
+                // Fetch data from Google Sheets (NvD column structure)
                 const result = await sheets.spreadsheets.values.get({
                     spreadsheetId: SPREADSHEET_ID,
-                    range: `${SHEET_NAME}!A2:F`
+                    range: `${SHEET_NAME}!A2:H`
                 });
                 
                 const rows = result.data.values;
@@ -344,12 +342,12 @@ class RedisClient {
                     const targetRow = rows[targetRowIndex - 2];
                     
                     challenge = {
-                        challenger: {
+                        player1: {
                             name: challengerRow[1], // Discord username in column B
                             discordId: challengerRow[5], // Discord ID in column F
                             rank: challengerRow[0]
                         },
-                        target: {
+                        player2: {
                             name: targetRow[1], // Discord username in column B
                             discordId: targetRow[5], // Discord ID in column F
                             rank: targetRow[0]
@@ -416,19 +414,9 @@ class RedisClient {
                 
                 console.log('Successfully reset challenge status in spreadsheet');
                 
-                // Use atomic cleanup for Redis
-                const cleanupResult = await this.atomicChallengeCleanup(
-                    challengerRank, 
-                    targetRank, 
-                    challenge.challenger.discordId, 
-                    challenge.target.discordId
-                );
-                
-                if (!cleanupResult.success) {
-                    console.warn('Redis cleanup had issues during auto-expiry:', cleanupResult.errors);
-                } else {
-                    console.log('✅ Redis cleanup completed successfully during auto-expiry');
-                }
+                // Simple cleanup like SvS-Bot-2 (no complex locking)
+                await this.removeChallenge(challengerRank, targetRank);
+                console.log('✅ Challenge cleanup completed successfully');
                 
                 // Send notification embed
                 const discordClient = global.discordClient;
@@ -444,7 +432,7 @@ class RedisClient {
                             .addFields(
                                 {
                                     name: ':bone: Challenger',
-                                    value: `Rank #${challenge.challenger.rank} (<@${challenge.challenger.discordId}>)`,
+                                    value: `Rank #${challenge.player1.rank} (<@${challenge.player1.discordId}>)`,
                                     inline: true
                                 },
                                 {
@@ -454,7 +442,7 @@ class RedisClient {
                                 },
                                 {
                                     name: ':bear: Challenged',
-                                    value: `Rank #${challenge.target.rank} (<@${challenge.target.discordId}>)`,
+                                    value: `Rank #${challenge.player2.rank} (<@${challenge.player2.discordId}>)`,
                                     inline: true
                                 }
                             )
@@ -484,7 +472,7 @@ class RedisClient {
         }
     }
 
-    // CHANGED: Updated key format: `nvd:cooldown:${discordId1}:${discordId2}`
+    // Key format: `nvd:cooldown:${discordId1}:${discordId2}` (sorted order, simplified from SvS element-based keys)
     generateCooldownKey(player1, player2) {
         const pair = [
             `${player1.discordId}`,
@@ -499,13 +487,11 @@ class RedisClient {
         const cooldownData = JSON.stringify({
             player1: {
                 discordId: player1.discordId,
-                name: player1.name
-                // CHANGED: Removed element property
+                name: player1.name || 'Unknown' // Handle missing name like SvS
             },
             player2: {
                 discordId: player2.discordId,
-                name: player2.name
-                // CHANGED: Removed element property
+                name: player2.name || 'Unknown' // Handle missing name like SvS
             },
             startTime: Date.now(),
             expiryTime: Date.now() + (expiryTime * 1000)
@@ -567,6 +553,38 @@ class RedisClient {
         }
     }
 
+    // Check if a challenge exists between two players - matches SvS-Bot-2
+    async checkChallenge(player1Rank, player2Rank) {
+        const key = this.generateChallengeKey(player1Rank, player2Rank);
+        
+        try {
+            const challengeData = await this.client.get(key);
+            if (challengeData) {
+                const ttl = await this.client.ttl(key);
+                const data = JSON.parse(challengeData);
+                return {
+                    active: true,
+                    remainingTime: ttl,
+                    details: data
+                };
+            }
+            return {
+                active: false,
+                remainingTime: 0,
+                details: null
+            };
+        } catch (error) {
+            console.error('Error checking challenge:', error);
+            logError(`Error checking challenge: ${error.message}\nStack: ${error.stack}`);
+            return {
+                active: false,
+                remainingTime: 0,
+                details: null,
+                error: true
+            };
+        }
+    }
+
     // Debug method to list all active cooldowns
     async listAllCooldowns() {
         try {
@@ -595,26 +613,24 @@ class RedisClient {
         }
     }
     
-    // List all active challenges
-    async listAllChallenges() {
+    // List all active challenges - matches SvS-Bot-2 method name
+    async getAllChallenges() {
         try {
             const keys = await this.client.keys(`${CHALLENGE_KEY_PREFIX}*`);
             const challenges = [];
             
             for (const key of keys) {
-                // Skip warning keys
-                if (key.includes('warning')) continue;
-                
                 const challengeData = await this.client.get(key);
                 const ttl = await this.client.ttl(key);
                 
                 if (challengeData) {
                     const data = JSON.parse(challengeData);
                     challenges.push({
-                        challenger: data.challenger,
-                        target: data.target,
-                        remainingTime: ttl,
-                        key: key
+                        key: key,
+                        player1: data.player1,
+                        player2: data.player2,
+                        challengeDate: data.challengeDate,
+                        remainingTime: ttl
                     });
                 }
             }
@@ -652,543 +668,6 @@ class RedisClient {
             console.error('Error getting player cooldowns:', error);
             logError(`Error getting player cooldowns: ${error.message}\nStack: ${error.stack}`);
             return [];
-        }
-    }
-
-    // Player Lock Management Methods
-    // Set a lock for a player involved in a challenge
-    async setPlayerLock(discordId, challengeKey) {
-        return this.setPlayerLockWithTTL(discordId, challengeKey, PLAYER_LOCK_EXPIRY_TIME);
-    }
-
-    // Set a player lock with custom TTL
-    async setPlayerLockWithTTL(discordId, challengeKey, customTTL) {
-        try {
-            const lockKey = `${PLAYER_LOCK_KEY_PREFIX}${discordId}`;
-            const lockData = JSON.stringify({
-                challengeKey: challengeKey,
-                timestamp: Date.now(),
-                expiryTime: Date.now() + (PLAYER_LOCK_EXPIRY_TIME * 1000)
-            });
-            
-            await this.client.setex(lockKey, customTTL, lockData);
-            console.log(`Set player lock for ${discordId} with challenge ${challengeKey} (TTL: ${customTTL}s)`);
-            return true;
-        } catch (error) {
-            console.error('Error setting player lock:', error);
-            logError(`Error setting player lock: ${error.message}\nStack: ${error.stack}`);
-            return false;
-        }
-    }
-
-    // Remove a player lock
-    async removePlayerLock(discordId) {
-        try {
-            const lockKey = `${PLAYER_LOCK_KEY_PREFIX}${discordId}`;
-            await this.client.del(lockKey);
-            console.log(`Removed player lock for ${discordId}`);
-            return true;
-        } catch (error) {
-            console.error('Error removing player lock:', error);
-            logError(`Error removing player lock: ${error.message}\nStack: ${error.stack}`);
-            return false;
-        }
-    }
-
-    // Check if a player is locked (involved in a challenge)
-    async checkPlayerLock(discordId) {
-        try {
-            const lockKey = `${PLAYER_LOCK_KEY_PREFIX}${discordId}`;
-            const lockData = await this.client.get(lockKey);
-            
-            if (lockData) {
-                const data = JSON.parse(lockData);
-                const ttl = await this.client.ttl(lockKey);
-                return {
-                    isLocked: true,
-                    challengeKey: data.challengeKey,
-                    remainingTime: ttl,
-                    lockData: data
-                };
-            }
-            
-            return {
-                isLocked: false,
-                challengeKey: null,
-                remainingTime: 0,
-                lockData: null
-            };
-        } catch (error) {
-            console.error('Error checking player lock:', error);
-            logError(`Error checking player lock: ${error.message}\nStack: ${error.stack}`);
-            return {
-                isLocked: false,
-                challengeKey: null,
-                remainingTime: 0,
-                lockData: null,
-                error: true
-            };
-        }
-    }
-
-    // Get all active player locks (for debugging)
-    async listAllPlayerLocks() {
-        try {
-            const keys = await this.client.keys(`${PLAYER_LOCK_KEY_PREFIX}*`);
-            const locks = [];
-            
-            for (const key of keys) {
-                const lockData = await this.client.get(key);
-                const ttl = await this.client.ttl(key);
-                
-                if (lockData) {
-                    const data = JSON.parse(lockData);
-                    const discordId = key.replace(PLAYER_LOCK_KEY_PREFIX, '');
-                    locks.push({
-                        discordId: discordId,
-                        challengeKey: data.challengeKey,
-                        remainingTime: ttl,
-                        timestamp: data.timestamp
-                    });
-                }
-            }
-            
-            return locks;
-        } catch (error) {
-            console.error('Error listing player locks:', error);
-            logError(`Error listing player locks: ${error.message}\nStack: ${error.stack}`);
-            return [];
-        }
-    }
-
-    // Clean up orphaned player locks (utility method)
-    async cleanupOrphanedPlayerLocks() {
-        try {
-            const playerLocks = await this.listAllPlayerLocks();
-            const challengeKeys = await this.client.keys(`${CHALLENGE_KEY_PREFIX}*`);
-            
-            // Filter out warning keys to get actual challenge keys
-            const activeChallengeKeys = challengeKeys.filter(key => !key.includes('warning'));
-            
-            let cleanedCount = 0;
-            for (const lock of playerLocks) {
-                // Check if the challenge this lock references still exists
-                if (!activeChallengeKeys.includes(lock.challengeKey)) {
-                    await this.removePlayerLock(lock.discordId);
-                    cleanedCount++;
-                    console.log(`Cleaned orphaned lock for player ${lock.discordId}`);
-                }
-            }
-            
-            console.log(`Cleaned ${cleanedCount} orphaned player locks`);
-            return cleanedCount;
-        } catch (error) {
-            console.error('Error cleaning orphaned player locks:', error);
-            logError(`Error cleaning orphaned player locks: ${error.message}\nStack: ${error.stack}`);
-            return 0;
-        }
-    }
-
-    // Distributed locking for processing operations
-    async acquireProcessingLock(challengeKey) {
-        try {
-            const lockKey = `${PROCESSING_LOCK_KEY_PREFIX}${challengeKey}`;
-            const lockValue = `${Date.now()}_${Math.random()}`;
-            
-            // Use SET with NX (only set if key doesn't exist) and EX (expiry)
-            const result = await this.client.set(lockKey, lockValue, 'EX', PROCESSING_LOCK_EXPIRY_TIME, 'NX');
-            
-            if (result === 'OK') {
-                console.log(`Acquired processing lock for ${challengeKey}`);
-                return { acquired: true, lockKey, lockValue };
-            } else {
-                console.log(`Failed to acquire processing lock for ${challengeKey} - already locked`);
-                return { acquired: false, lockKey: null, lockValue: null };
-            }
-        } catch (error) {
-            console.error('Error acquiring processing lock:', error);
-            logError(`Error acquiring processing lock: ${error.message}\nStack: ${error.stack}`);
-            return { acquired: false, lockKey: null, lockValue: null, error: true };
-        }
-    }
-
-    async releaseProcessingLock(lockKey, lockValue) {
-        try {
-            // Use Lua script to atomically check value and delete
-            const luaScript = `
-                if redis.call("get", KEYS[1]) == ARGV[1] then
-                    return redis.call("del", KEYS[1])
-                else
-                    return 0
-                end
-            `;
-            
-            const result = await this.client.eval(luaScript, 1, lockKey, lockValue);
-            
-            if (result === 1) {
-                console.log(`Released processing lock for ${lockKey}`);
-                return true;
-            } else {
-                console.log(`Could not release processing lock for ${lockKey} - value mismatch or already released`);
-                return false;
-            }
-        } catch (error) {
-            console.error('Error releasing processing lock:', error);
-            logError(`Error releasing processing lock: ${error.message}\nStack: ${error.stack}`);
-            return false;
-        }
-    }
-
-    // Atomic challenge cleanup with distributed locking
-    async atomicChallengeCleanup(challengerRank, targetRank, challengerDiscordId, targetDiscordId) {
-        const challengeKey = `${challengerRank}:${targetRank}`;
-        const lock = await this.acquireProcessingLock(challengeKey);
-        
-        if (!lock.acquired) {
-            return { 
-                success: false, 
-                error: 'Could not acquire processing lock - operation may already be in progress',
-                alreadyProcessing: true 
-            };
-        }
-
-        try {
-            // Collect all operations to perform
-            const operations = [];
-            const errors = [];
-
-            // 1. Remove challenge
-            try {
-                await this.removeChallenge(challengerRank, targetRank);
-                console.log(`✓ Removed challenge ${challengerRank} vs ${targetRank}`);
-            } catch (error) {
-                errors.push(`Failed to remove challenge: ${error.message}`);
-            }
-
-            // 2. Remove challenger lock
-            if (challengerDiscordId) {
-                try {
-                    await this.removePlayerLock(challengerDiscordId);
-                    console.log(`✓ Removed challenger lock for ${challengerDiscordId}`);
-                } catch (error) {
-                    errors.push(`Failed to remove challenger lock: ${error.message}`);
-                }
-            }
-
-            // 3. Remove target lock
-            if (targetDiscordId) {
-                try {
-                    await this.removePlayerLock(targetDiscordId);
-                    console.log(`✓ Removed target lock for ${targetDiscordId}`);
-                } catch (error) {
-                    errors.push(`Failed to remove target lock: ${error.message}`);
-                }
-            }
-
-            // Verify cleanup was successful
-            const verification = await this.verifyCleanupComplete(challengerRank, targetRank, challengerDiscordId, targetDiscordId);
-            
-            const result = {
-                success: errors.length === 0 && verification.isClean,
-                errors: errors,
-                verification: verification
-            };
-
-            if (result.success) {
-                console.log(`✅ Atomic cleanup completed successfully for ${challengeKey}`);
-            } else {
-                console.warn(`⚠️ Atomic cleanup had issues for ${challengeKey}:`, errors);
-            }
-
-            return result;
-
-        } finally {
-            // Always release the lock
-            await this.releaseProcessingLock(lock.lockKey, lock.lockValue);
-        }
-    }
-
-    // Verify that cleanup was completed successfully
-    async verifyCleanupComplete(challengerRank, targetRank, challengerDiscordId, targetDiscordId) {
-        try {
-            const results = {};
-            
-            // Check if challenge still exists
-            const challengeKey = `${CHALLENGE_KEY_PREFIX}${challengerRank}:${targetRank}`;
-            const warningKey = `${WARNING_KEY_PREFIX}${challengerRank}:${targetRank}`;
-            
-            results.challengeExists = await this.client.exists(challengeKey) === 1;
-            results.warningExists = await this.client.exists(warningKey) === 1;
-            
-            // Check if player locks still exist
-            if (challengerDiscordId) {
-                const challengerLock = await this.checkPlayerLock(challengerDiscordId);
-                results.challengerLocked = challengerLock.isLocked;
-            } else {
-                results.challengerLocked = false;
-            }
-            
-            if (targetDiscordId) {
-                const targetLock = await this.checkPlayerLock(targetDiscordId);
-                results.targetLocked = targetLock.isLocked;
-            } else {
-                results.targetLocked = false;
-            }
-            
-            // Determine if cleanup is complete
-            results.isClean = !results.challengeExists && 
-                             !results.warningExists && 
-                             !results.challengerLocked && 
-                             !results.targetLocked;
-            
-            if (!results.isClean) {
-                console.warn(`Cleanup verification failed for ${challengerRank} vs ${targetRank}:`, results);
-            }
-            
-            return results;
-            
-        } catch (error) {
-            console.error('Error verifying cleanup:', error);
-            logError(`Error verifying cleanup: ${error.message}\nStack: ${error.stack}`);
-            return {
-                isClean: false,
-                error: error.message,
-                challengeExists: true, // Assume dirty state on error
-                warningExists: true,
-                challengerLocked: true,
-                targetLocked: true
-            };
-        }
-    }
-
-    // Retry wrapper for critical operations
-    async withRetry(operation, maxRetries = 3, backoffMs = 1000) {
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-                const result = await operation();
-                return { success: true, result, attempt };
-            } catch (error) {
-                console.warn(`Operation failed on attempt ${attempt}/${maxRetries}:`, error.message);
-                
-                if (attempt === maxRetries) {
-                    return { success: false, error, attempt };
-                }
-                
-                // Exponential backoff
-                const delay = backoffMs * Math.pow(2, attempt - 1);
-                await new Promise(resolve => setTimeout(resolve, delay));
-            }
-        }
-    }
-
-    // Clear all cooldowns (utility method for admin operations)
-    async clearAllCooldowns() {
-        try {
-            const cooldownKeys = await this.client.keys(`${COOLDOWN_KEY_PREFIX}*`);
-            if (cooldownKeys.length > 0) {
-                await this.client.del(...cooldownKeys);
-                console.log(`Cleared ${cooldownKeys.length} cooldown entries`);
-                return { success: true, count: cooldownKeys.length };
-            }
-            console.log('No cooldowns to clear');
-            return { success: true, count: 0 };
-        } catch (error) {
-            console.error('Error clearing all cooldowns:', error);
-            logError(`Error clearing all cooldowns: ${error.message}\nStack: ${error.stack}`);
-            return { success: false, error: error.message, count: 0 };
-        }
-    }
-
-    // Comprehensive Redis data validation and repair
-    async validateAndRepairRedisData(sheetsData = null) {
-        const issues = [];
-        const repairs = [];
-        
-        try {
-            console.log('🔍 Starting comprehensive Redis data validation...');
-            
-            // 1. Get all Redis data
-            const allChallenges = await this.listAllChallenges();
-            const allPlayerLocks = await this.listAllPlayerLocks();
-            const allCooldowns = await this.listAllCooldowns();
-            
-            console.log(`├─ Found ${allChallenges.length} challenges, ${allPlayerLocks.length} player locks, ${allCooldowns.length} cooldowns`);
-            
-            // 2. Check for orphaned player locks (locks without corresponding challenges)
-            for (const lock of allPlayerLocks) {
-                const correspondingChallenge = allChallenges.find(c => 
-                    lock.challengeKey === `${CHALLENGE_KEY_PREFIX}${c.challenger.rank}:${c.target.rank}` ||
-                    lock.challengeKey === `${CHALLENGE_KEY_PREFIX}${c.target.rank}:${c.challenger.rank}`
-                );
-                
-                if (!correspondingChallenge) {
-                    issues.push({
-                        type: 'orphaned_player_lock',
-                        discordId: lock.discordId,
-                        challengeKey: lock.challengeKey
-                    });
-                    
-                    await this.removePlayerLock(lock.discordId);
-                    repairs.push(`Removed orphaned player lock for ${lock.discordId}`);
-                }
-            }
-            
-            // 3. Check for challenges without corresponding player locks
-            for (const challenge of allChallenges) {
-                const challengerLock = await this.checkPlayerLock(challenge.challenger.discordId);
-                const targetLock = await this.checkPlayerLock(challenge.target.discordId);
-                
-                if (!challengerLock.isLocked) {
-                    issues.push({
-                        type: 'missing_challenger_lock',
-                        challenge: `${challenge.challenger.rank} vs ${challenge.target.rank}`,
-                        discordId: challenge.challenger.discordId
-                    });
-                    
-                    const challengeKey = `${CHALLENGE_KEY_PREFIX}${challenge.challenger.rank}:${challenge.target.rank}`;
-                    await this.setPlayerLock(challenge.challenger.discordId, challengeKey);
-                    repairs.push(`Added missing challenger lock for ${challenge.challenger.discordId}`);
-                }
-                
-                if (!targetLock.isLocked) {
-                    issues.push({
-                        type: 'missing_target_lock',
-                        challenge: `${challenge.challenger.rank} vs ${challenge.target.rank}`,
-                        discordId: challenge.target.discordId
-                    });
-                    
-                    const challengeKey = `${CHALLENGE_KEY_PREFIX}${challenge.challenger.rank}:${challenge.target.rank}`;
-                    await this.setPlayerLock(challenge.target.discordId, challengeKey);
-                    repairs.push(`Added missing target lock for ${challenge.target.discordId}`);
-                }
-            }
-            
-            // 4. Check for expired challenges that should have been auto-nullified
-            const now = Date.now();
-            for (const challenge of allChallenges) {
-                if (challenge.remainingTime <= 0) {
-                    issues.push({
-                        type: 'expired_challenge',
-                        challenge: `${challenge.challenger.rank} vs ${challenge.target.rank}`,
-                        expiredBy: Math.abs(challenge.remainingTime)
-                    });
-                    
-                    // Force cleanup of expired challenge
-                    const cleanupResult = await this.atomicChallengeCleanup(
-                        challenge.challenger.rank,
-                        challenge.target.rank,
-                        challenge.challenger.discordId,
-                        challenge.target.discordId
-                    );
-                    
-                    if (cleanupResult.success) {
-                        repairs.push(`Cleaned up expired challenge ${challenge.challenger.rank} vs ${challenge.target.rank}`);
-                    }
-                }
-            }
-            
-            // 5. If sheets data provided, cross-reference with Google Sheets
-            if (sheetsData) {
-                const activeChallengesInSheets = sheetsData.filter(row => 
-                    row[2] === 'Challenge' && row[4] // Status = Challenge and has opponent
-                );
-                
-                // Check for challenges in Redis not in Sheets
-                for (const challenge of allChallenges) {
-                    const foundInSheets = activeChallengesInSheets.find(row => 
-                        (row[0] === challenge.challenger.rank.toString() && row[4] === challenge.target.rank.toString()) ||
-                        (row[0] === challenge.target.rank.toString() && row[4] === challenge.challenger.rank.toString())
-                    );
-                    
-                    if (!foundInSheets) {
-                        issues.push({
-                            type: 'redis_challenge_not_in_sheets',
-                            challenge: `${challenge.challenger.rank} vs ${challenge.target.rank}`
-                        });
-                        
-                        // Clean up Redis challenge not in sheets
-                        const cleanupResult = await this.atomicChallengeCleanup(
-                            challenge.challenger.rank,
-                            challenge.target.rank,
-                            challenge.challenger.discordId,
-                            challenge.target.discordId
-                        );
-                        
-                        if (cleanupResult.success) {
-                            repairs.push(`Removed Redis challenge not found in sheets: ${challenge.challenger.rank} vs ${challenge.target.rank}`);
-                        }
-                    }
-                }
-                
-                // Check for challenges in Sheets not in Redis
-                const challengePairs = new Map();
-                activeChallengesInSheets.forEach(row => {
-                    const rank = row[0];
-                    const opponent = row[4];
-                    const pairKey = [rank, opponent].sort().join('-');
-                    
-                    if (!challengePairs.has(pairKey)) {
-                        challengePairs.set(pairKey, {
-                            rank1: rank,
-                            rank2: opponent,
-                            players: [row]
-                        });
-                    } else {
-                        challengePairs.get(pairKey).players.push(row);
-                    }
-                });
-                
-                for (const [pairKey, pair] of challengePairs) {
-                    if (pair.players.length === 2) { // Valid bidirectional challenge
-                        const foundInRedis = allChallenges.find(c => 
-                            (c.challenger.rank.toString() === pair.rank1 && c.target.rank.toString() === pair.rank2) ||
-                            (c.challenger.rank.toString() === pair.rank2 && c.target.rank.toString() === pair.rank1)
-                        );
-                        
-                        if (!foundInRedis) {
-                            issues.push({
-                                type: 'sheets_challenge_not_in_redis',
-                                challenge: `${pair.rank1} vs ${pair.rank2}`
-                            });
-                            
-                            // Note: Don't auto-sync here, let admin decide
-                            repairs.push(`Found challenge in sheets not in Redis: ${pair.rank1} vs ${pair.rank2} (needs manual sync)`);
-                        }
-                    }
-                }
-            }
-            
-            // 6. Clean up any stale processing locks
-            const processingKeys = await this.client.keys(`${PROCESSING_LOCK_KEY_PREFIX}*`);
-            if (processingKeys.length > 0) {
-                await this.client.del(...processingKeys);
-                repairs.push(`Cleaned ${processingKeys.length} stale processing locks`);
-            }
-            
-            console.log(`✅ Validation completed: ${issues.length} issues found, ${repairs.length} repairs made`);
-            
-            return {
-                success: true,
-                issues: issues,
-                repairs: repairs,
-                summary: {
-                    challenges: allChallenges.length,
-                    playerLocks: allPlayerLocks.length,
-                    cooldowns: allCooldowns.length,
-                    issuesFound: issues.length,
-                    repairsMade: repairs.length
-                }
-            };
-            
-        } catch (error) {
-            console.error('Error during Redis validation:', error);
-            logError(`Redis validation error: ${error.message}\nStack: ${error.stack}`);
-            return {
-                success: false,
-                error: error.message,
-                issues: issues,
-                repairs: repairs
-            };
         }
     }
 }

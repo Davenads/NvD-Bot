@@ -196,51 +196,22 @@ async function autoNullChallenges(client) {
       });
       console.log(`├─ Batch update completed successfully`);
       
-      // NEW: Use atomic cleanup for Redis operations with distributed locking
-      console.log('├─ Performing atomic Redis cleanup...');
+      // Simple Redis cleanup like SvS-Bot-2 (no complex locking)
+      console.log('├─ Performing simple Redis cleanup...');
       const redisClient = require('./redis-client');
       let successfulCleanups = 0;
-      let failedCleanups = [];
       
       for (const challenge of validChallengesFound) {
         try {
-          // Get Discord IDs for atomic cleanup
-          const playerDiscordId = rows.find(r => r[0] === challenge.playerRank)?.[5]; // Discord ID column F
-          const opponentDiscordId = rows.find(r => r[0] === challenge.opponent)?.[5]; // Discord ID column F
-          
-          const cleanupResult = await redisClient.atomicChallengeCleanup(
-            challenge.playerRank,
-            challenge.opponent, 
-            playerDiscordId,
-            opponentDiscordId
-          );
-          
-          if (cleanupResult.success) {
-            successfulCleanups++;
-            console.log(`│  ├─ ✅ Redis cleanup successful for ${challenge.playerRank} vs ${challenge.opponent}`);
-          } else if (cleanupResult.alreadyProcessing) {
-            console.log(`│  ├─ ⏭️ Challenge ${challenge.playerRank} vs ${challenge.opponent} already being processed`);
-            successfulCleanups++; // Count as successful since it's being handled
-          } else {
-            failedCleanups.push({
-              challenge: `${challenge.playerRank} vs ${challenge.opponent}`,
-              errors: cleanupResult.errors
-            });
-            console.warn(`│  ├─ ⚠️ Redis cleanup had issues for ${challenge.playerRank} vs ${challenge.opponent}:`, cleanupResult.errors);
-          }
+          await redisClient.removeChallenge(challenge.playerRank, challenge.opponent);
+          successfulCleanups++;
+          console.log(`│  ├─ ✅ Redis cleanup successful for ${challenge.playerRank} vs ${challenge.opponent}`);
         } catch (cleanupError) {
-          failedCleanups.push({
-            challenge: `${challenge.playerRank} vs ${challenge.opponent}`,
-            errors: [cleanupError.message]
-          });
           console.error(`│  ├─ ❌ Redis cleanup failed for ${challenge.playerRank} vs ${challenge.opponent}:`, cleanupError);
         }
       }
       
       console.log(`├─ Redis cleanup completed: ${successfulCleanups}/${validChallengesFound.length} successful`);
-      if (failedCleanups.length > 0) {
-        console.warn(`├─ ${failedCleanups.length} Redis cleanups had issues:`, failedCleanups);
-      }
       
       // Find a suitable announcements channel to post to
       if (client && nullifiedChallenges.length > 0) {
@@ -324,17 +295,25 @@ async function autoNullChallenges(client) {
 function initScheduledTasks(client) {
   console.log('Initializing scheduled tasks...');
 
-  // DISABLED: Daily scheduled auto-null to prevent race conditions with Redis TTL system
-  // The Redis TTL expiry system handles challenge auto-nullification automatically
-  console.log('⚠️ Daily scheduled auto-null task is DISABLED to prevent race conditions');
-  console.log('   Auto-nullification is handled by Redis TTL expiry system');
-
-  // DISABLED: Initial startup check to prevent race conditions
-  // The startup sync in index.js now handles existing challenges properly
-  console.log('⚠️ Initial startup auto-null check is DISABLED');
-  console.log('   Startup sync in index.js handles existing challenges');
+  // RE-ENABLED: Daily scheduled auto-null as backup to Redis TTL system (matches SvS-Bot-2)
+  // This provides a safety net in case Redis events fail
+  console.log('✅ Setting up daily auto-null task as backup safety net...');
   
-  console.log('All scheduled tasks initialized (auto-null tasks disabled)');
+  // Schedule daily auto-null at 6 AM EST
+  cron.schedule('0 6 * * *', async () => {
+    console.log('Running daily auto-null backup check...');
+    await autoNullChallenges(client);
+  }, {
+    timezone: DEFAULT_TIMEZONE
+  });
+
+  // Run initial check 30 seconds after startup
+  setTimeout(async () => {
+    console.log('Running initial startup auto-null check...');
+    await autoNullChallenges(client);
+  }, 30000);
+  
+  console.log('All scheduled tasks initialized (backup auto-null enabled)');
 }
 
 module.exports = {

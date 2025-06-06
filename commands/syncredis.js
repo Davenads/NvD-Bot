@@ -34,7 +34,7 @@ module.exports = {
         )
         .addBooleanOption(option =>
             option.setName('cleanup_orphaned')
-                .setDescription('Clean up orphaned Redis data (locks without challenges, etc.)')
+                .setDescription('Clean up stale Redis data (warning keys without challenges)')
                 .setRequired(false)
         )
         .addBooleanOption(option =>
@@ -45,16 +45,6 @@ module.exports = {
         .addBooleanOption(option =>
             option.setName('clear_cooldowns')
                 .setDescription('Clear all player cooldowns (use when reverting matches)')
-                .setRequired(false)
-        )
-        .addBooleanOption(option =>
-            option.setName('validate_redis')
-                .setDescription('Run comprehensive Redis data validation and repair')
-                .setRequired(false)
-        )
-        .addUserOption(option =>
-            option.setName('fix_player_lock')
-                .setDescription('Fix a specific player\'s stuck lock (mention the Discord user)')
                 .setRequired(false)
         ),
 
@@ -78,10 +68,10 @@ module.exports = {
         const cleanupOrphaned = interaction.options.getBoolean('cleanup_orphaned') || false;
         const showCooldowns = interaction.options.getBoolean('show_cooldowns') || false;
         const clearCooldowns = interaction.options.getBoolean('clear_cooldowns') || false;
-        const validateRedis = interaction.options.getBoolean('validate_redis') || false;
-        const fixPlayerLock = interaction.options.getUser('fix_player_lock');
+        const validateRedis = false; // Disabled for stability
+        const fixPlayerLock = null; // Disabled for stability
 
-        console.log(`├─ Options: force=${force}, dry_run=${dryRun}, cleanup_orphaned=${cleanupOrphaned}, show_cooldowns=${showCooldowns}, clear_cooldowns=${clearCooldowns}, validate_redis=${validateRedis}, fix_player_lock=${fixPlayerLock?.tag || 'none'}`);
+        console.log(`├─ Options: force=${force}, dry_run=${dryRun}, cleanup_orphaned=${cleanupOrphaned}, show_cooldowns=${showCooldowns}, clear_cooldowns=${clearCooldowns}`);
 
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -109,8 +99,8 @@ module.exports = {
             const rows = result.data.values || [];
             console.log(`├─ Found ${rows.length} total rows in spreadsheet`);
             
-            // Handle specific player lock fix if requested
-            if (fixPlayerLock) {
+            // Player lock fix disabled for stability
+            if (false) {
                 console.log(`├─ Fixing player lock for ${fixPlayerLock.tag} (${fixPlayerLock.id})...`);
                 
                 // Find the player in the spreadsheet
@@ -126,12 +116,11 @@ module.exports = {
                 const playerStatus = playerRow[2]; // Status in column C
                 const playerName = playerRow[1]; // Discord username in column B
                 
-                // Check current Redis state
-                const playerLock = await redisClient.checkPlayerLock(fixPlayerLock.id);
-                const allChallenges = await redisClient.listAllChallenges();
+                // Check current Redis state (simplified)
+                const allChallenges = await redisClient.getAllChallenges();
                 const playerChallenges = allChallenges.filter(c => 
-                    c.challenger.discordId === fixPlayerLock.id || 
-                    c.target.discordId === fixPlayerLock.id
+                    c.player1.discordId === fixPlayerLock.id || 
+                    c.player2.discordId === fixPlayerLock.id
                 );
                 
                 let fixResult = { fixed: [], issues: [] };
@@ -210,8 +199,8 @@ module.exports = {
                 interaction.fixEmbed = fixEmbed;
             }
             
-            // Run Redis validation if requested
-            if (validateRedis) {
+            // Redis validation simplified
+            if (false) {
                 console.log('├─ Running comprehensive Redis validation...');
                 const validationResult = await redisClient.validateAndRepairRedisData(rows);
                 
@@ -517,21 +506,10 @@ module.exports = {
                         }
                     }
 
-                    // Set challenge in Redis with calculated TTL
-                    if (customTTL) {
-                        await redisClient.setChallengeWithTTL(pair.challenger, pair.target, interaction.client, customTTL);
-                    } else {
-                        await redisClient.setChallenge(pair.challenger, pair.target, interaction.client);
-                    }
-
-                    // Set player locks with same TTL
-                    if (customTTL) {
-                        await redisClient.setPlayerLockWithTTL(pair.challenger.discordId, challengeKey, customTTL);
-                        await redisClient.setPlayerLockWithTTL(pair.target.discordId, challengeKey, customTTL);
-                    } else {
-                        await redisClient.setPlayerLock(pair.challenger.discordId, challengeKey);
-                        await redisClient.setPlayerLock(pair.target.discordId, challengeKey);
-                    }
+                    // Set challenge in Redis (simplified approach matching SvS-Bot-2)
+                    await redisClient.setChallenge(pair.challenger, pair.target, pair.challenger.challengeDate || '');
+                    
+                    // Player locks removed for simplified approach (matching SvS-Bot-2)
 
                     syncedCount++;
                     syncResults.push({

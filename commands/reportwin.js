@@ -278,14 +278,12 @@ module.exports = {
         }
       }
       
-      // Set the cooldown for both players
+      // Set the cooldown for both players (match SvS-Bot-2 structure)
       const player1 = {
-        discordId: winnerRow[5], // CHANGED: Discord ID is now column F (index 5)
-        name: winnerRow[1] // CHANGED: Discord username is now column B (index 1)
+        discordId: winnerRow[5] // Discord ID is now column F (index 5)
       }
       const player2 = {
-        discordId: loserRow[5], // CHANGED: Discord ID is now column F (index 5)
-        name: loserRow[1] // CHANGED: Discord username is now column B (index 1)
+        discordId: loserRow[5] // Discord ID is now column F (index 5)
       }
       // Set cooldown in Redis and remove challenge
       try {
@@ -296,17 +294,9 @@ module.exports = {
           loser: player2.discordId
         });
         
-        // Use atomic cleanup for Redis operations
-        const cleanupResult = await redisClient.atomicChallengeCleanup(
-          winnerRank, 
-          loserRank, 
-          player1.discordId, 
-          player2.discordId
-        );
-        
-        if (cleanupResult.success) {
-          console.log('✅ Atomic Redis cleanup completed successfully');
-        } else {
+        // Simple Redis cleanup like SvS-Bot-2
+        await redisClient.removeChallenge(winnerRank, loserRank);
+        console.log('✅ Redis cleanup completed successfully');
           console.warn('⚠️ Redis cleanup had issues but continuing with match reporting:', cleanupResult.errors);
           // Don't throw error here - continue with match reporting even if cleanup fails
         }
