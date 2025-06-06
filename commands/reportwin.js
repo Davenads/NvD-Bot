@@ -299,9 +299,6 @@ module.exports = {
         console.log(`Removing challenge from Redis: ranks ${winnerRank} vs ${loserRank}`);
         await redisClient.removeChallenge(winnerRank, loserRank);
         console.log('✅ Redis cleanup completed successfully');
-          console.warn('⚠️ Redis cleanup had issues but continuing with match reporting:', cleanupResult.errors);
-          // Don't throw error here - continue with match reporting even if cleanup fails
-        }
       } catch (cooldownError) {
         console.error('Error setting cooldown or performing cleanup:', cooldownError);
         // Don't throw error here - continue with match reporting even if cooldown fails
