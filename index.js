@@ -27,16 +27,16 @@ for (const file of commandFiles) {
     const command = require(filePath);
     client.commands.set(command.data.name, command);
 }
-// Load scheduled tasks module
-const { initScheduledTasks } = require('./scheduledTasks');
+// Scheduled tasks module (disabled - kept for potential future use)
+// const { initScheduledTasks } = require('./scheduledTasks');
 
 // Event listener for when the bot becomes ready and online
 client.once('ready', async () => {
     const timestamp = new Date().toLocaleString();
     console.log(`Logged in as ${client.user.tag} at ${timestamp}`);
     
-    // Initialize scheduled tasks (complementing Redis auto-null system)
-    initScheduledTasks(client);
+    // Scheduled tasks disabled - Redis TTL handles challenge expiry automatically
+    // initScheduledTasks(client);
     
     // NEW: Sync existing challenges to Redis on startup
     await syncExistingChallenges();

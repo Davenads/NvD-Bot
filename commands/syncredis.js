@@ -506,8 +506,8 @@ module.exports = {
                         }
                     }
 
-                    // Set challenge in Redis (simplified approach matching SvS-Bot-2)
-                    await redisClient.setChallenge(pair.challenger, pair.target, pair.challenger.challengeDate || '');
+                    // Set challenge in Redis with calculated TTL based on cDate
+                    await redisClient.setChallenge(pair.challenger, pair.target, pair.challenger.challengeDate || '', customTTL);
                     
                     // Player locks removed for simplified approach (matching SvS-Bot-2)
 

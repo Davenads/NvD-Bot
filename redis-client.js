@@ -154,12 +154,12 @@ class RedisClient {
     }
 
     // Store challenge in Redis - matches SvS-Bot-2 pattern with nvd namespace
-    async setChallenge(player1, player2, challengeDate) {
+    async setChallenge(player1, player2, challengeDate, customTTL = null) {
         const key = this.generateChallengeKey(player1.rank, player2.rank);
-        // 3 days expiry (259,200 seconds)
-        const expiryTime = 3 * 24 * 60 * 60;
-        // 24 hours before expiration (for warning) - 2 days
-        const warningTime = 2 * 24 * 60 * 60;
+        // Use custom TTL if provided, otherwise default to 3 days (259,200 seconds)
+        const expiryTime = customTTL || (3 * 24 * 60 * 60);
+        // Warning time: 24 hours before expiration, but minimum 300 seconds (5 minutes)
+        const warningTime = Math.max(300, expiryTime - (24 * 60 * 60));
         
         const challengeData = JSON.stringify({
             player1: {
