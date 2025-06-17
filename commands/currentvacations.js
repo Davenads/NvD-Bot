@@ -152,7 +152,7 @@ module.exports = {
                 });
             });
         } catch (error) {
-            logError(`Error fetching current vacations: ${error.message}\nStack: ${error.stack}`);
+            logError('Error fetching current vacations', error);
             await interaction.reply({ content: 'There was an error fetching the players on vacation. Please try again.', flags: MessageFlags.Ephemeral });
         }
     },

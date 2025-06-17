@@ -239,8 +239,8 @@ module.exports = {
             // Reply with the embed
             return interaction.editReply({ embeds: [embed] });
         } catch (error) {
-            console.error(`└─ Error registering new player:`, error);
-            logError(`Register command error: ${error.message}\nStack: ${error.stack}`);
+            console.error(`└─ Error registering new player`);
+            logError('Register command error', error);
             return interaction.editReply({ content: 'An error occurred while registering the player. Please try again later.', flags: MessageFlags.Ephemeral });
         }
     },

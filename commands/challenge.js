@@ -346,10 +346,8 @@ module.exports = {
       })
       console.log('└─ Challenge command completed successfully')
     } catch (error) {
-      console.log(`└─ Error executing challenge command: ${error.message}`)
-      logError(
-        `Challenge command error: ${error.message}\nStack: ${error.stack}`
-      )
+      console.log(`└─ Error executing challenge command`)
+      logError('Challenge command error', error)
       await interaction.editReply({
         content:
           'An error occurred while processing your challenge. Please try again later.'

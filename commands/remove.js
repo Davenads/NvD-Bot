@@ -463,7 +463,7 @@ module.exports = {
       })
     } catch (error) {
       console.error(`└─ Error: ${error.message}`)
-      logError(`Error removing player: ${error.message}\nStack: ${error.stack}`)
+      logError('Error removing player', error)
       return interaction.editReply({
         content:
           'An error occurred while removing the player. Please try again later.',

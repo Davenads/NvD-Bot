@@ -211,8 +211,8 @@ module.exports = {
                 });
             }
         } catch (error) {
-            console.error('Error in nvd-titledefends command:', error); // CHANGED: Updated command name in error message
-            logError(`NvD title defends command error: ${error.message}\nStack: ${error.stack}`); // CHANGED: Updated command name in error message
+            console.error('Error in nvd-titledefends command'); // CHANGED: Updated command name in error message
+            logError('NvD title defends command error', error); // CHANGED: Updated command name in error message
             
             await interaction.editReply({
                 content: 'An error occurred while fetching the title defense leaderboard. Please try again later.',

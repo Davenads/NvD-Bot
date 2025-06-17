@@ -69,7 +69,7 @@ module.exports = {
             // Send the embed privately to the user who invoked the command
             await interaction.reply({ embeds: [challengeEmbed], flags: MessageFlags.Ephemeral });
         } catch (error) {
-            logError(`Error fetching current challenges: ${error.message}\nStack: ${error.stack}`);
+            logError('Error fetching current challenges', error);
             await interaction.reply({ content: 'There was an error fetching the current challenges. Please try again.', flags: MessageFlags.Ephemeral });
         }
     },

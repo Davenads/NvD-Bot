@@ -2,6 +2,7 @@ require('dotenv').config(); // Load environment variables from .env file
 // Fix Google Auth for Heroku environment
 require('./fixGoogleAuth');
 const { Client, GatewayIntentBits, Collection, MessageFlags } = require('discord.js');
+const { logError } = require('./logger');
 const fs = require('fs');
 const path = require('path');
 // Initialize the Discord client with the necessary intents
@@ -127,7 +128,8 @@ async function syncExistingChallenges() {
         console.log(`🎯 Sync completed: ${syncedCount} challenge pairs synced to Redis`);
         
     } catch (error) {
-        console.error('❌ Error syncing existing challenges:', error);
+        console.error('❌ Error syncing existing challenges');
+        logError('Error syncing existing challenges', error);
         // Don't crash the bot if sync fails
     }
 }
@@ -153,7 +155,8 @@ client.on('interactionCreate', async interaction => {
             // Execute the command
             await command.execute(interaction);
         } catch (error) {
-            console.error(error);
+            console.error('Error executing command');
+            logError('Command execution error', error);
             // Respond with an error message if command execution fails
             await interaction.reply({ content: 'There was an error while executing this command!', flags: MessageFlags.Ephemeral });
         }
@@ -167,7 +170,8 @@ client.on('interactionCreate', async interaction => {
             // Execute the autocomplete handler
             await command.autocomplete(interaction);
         } catch (error) {
-            console.error(error);
+            console.error('Autocomplete error');
+            logError('Autocomplete error', error);
         }
     }
 });

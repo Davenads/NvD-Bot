@@ -661,8 +661,7 @@ module.exports = {
 
         } catch (error) {
             console.error(`└─ Error in sync command: ${error.message}`);
-            console.error(`└─ Full error:`, error);
-            logError(`SyncRedis command error: ${error.message}\nStack: ${error.stack}`);
+            logError('SyncRedis command error', error);
 
             const errorEmbed = new EmbedBuilder()
                 .setColor('#FF0000')

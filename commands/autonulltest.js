@@ -109,9 +109,8 @@ module.exports = {
         });
       }
     } catch (error) {
-      console.error(`Error executing nvd-autonulltest command: ${error.message}`);
-      console.error(error.stack);
-      logError(`NvD autonulltest command error: ${error.message}\nStack: ${error.stack}`);
+      console.error('Error executing nvd-autonulltest command');
+      logError('NvD autonulltest command error', error);
       
       await interaction.editReply({
         content: 'An error occurred while processing the command. Please try again later.'

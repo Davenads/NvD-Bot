@@ -48,8 +48,8 @@ class RedisClient {
         this.client = new Redis(redisConfig);
 
         this.client.on('error', (err) => {
-            console.error('❌ Redis Client Error:', err.message);
-            logError(`Redis Client Error: ${err.message}\nStack: ${err.stack}`);
+            console.error('❌ Redis Client Error');
+            logError('Redis Client Error', err);
         });
 
         this.client.on('connect', () => {
@@ -140,8 +140,8 @@ class RedisClient {
             });
             
         } catch (error) {
-            console.error('Error setting up Redis expiry listener:', error);
-            logError(`Error setting up Redis expiry listener: ${error.message}\nStack: ${error.stack}`);
+            console.error('Error setting up Redis expiry listener');
+            logError('Error setting up Redis expiry listener', error);
         }
     }
     
@@ -189,8 +189,8 @@ class RedisClient {
             
             return true;
         } catch (error) {
-            console.error('Error setting challenge:', error);
-            logError(`Error setting challenge: ${error.message}\nStack: ${error.stack}`);
+            console.error('Error setting challenge');
+            logError('Error setting challenge', error);
             return false;
         }
     }
@@ -222,8 +222,8 @@ class RedisClient {
             
             return true;
         } catch (error) {
-            console.error('❌ Error removing challenge:', error);
-            logError(`Error removing challenge: ${error.message}\nStack: ${error.stack}`);
+            console.error('❌ Error removing challenge');
+            logError('Error removing challenge', error);
             return false;
         }
     }
@@ -290,8 +290,8 @@ class RedisClient {
             console.log('Challenge expiry warning sent successfully');
             
         } catch (error) {
-            console.error('Error handling warning expiry:', error);
-            logError(`Error handling warning expiry: ${error.message}\nStack: ${error.stack}`);
+            console.error('Error handling warning expiry');
+            logError('Error handling warning expiry', error);
         }
     }
     
@@ -506,8 +506,8 @@ class RedisClient {
             }
             
         } catch (error) {
-            console.error('Error handling challenge expiry:', error);
-            logError(`Error handling challenge expiry: ${error.message}\nStack: ${error.stack}`);
+            console.error('Error handling challenge expiry');
+            logError('Error handling challenge expiry', error);
         }
     }
 
@@ -543,8 +543,8 @@ class RedisClient {
             console.log(`Set cooldown for ${key} with expiry ${expiryTime}s`);
             return true;
         } catch (error) {
-            console.error('Error setting cooldown:', error);
-            logError(`Error setting cooldown: ${error.message}\nStack: ${error.stack}`);
+            console.error('Error setting cooldown');
+            logError('Error setting cooldown', error);
             return false;
         }
     }
@@ -573,8 +573,8 @@ class RedisClient {
                 details: null
             };
         } catch (error) {
-            console.error(`Error checking cooldown ${key}:`, error);
-            logError(`Error checking cooldown ${key}: ${error.message}\nStack: ${error.stack}`);
+            console.error(`Error checking cooldown`);
+            logError('Error checking cooldown', error);
             return {
                 onCooldown: false,
                 remainingTime: 0,
@@ -592,8 +592,8 @@ class RedisClient {
             console.log(`Removed cooldown for ${key}`);
             return true;
         } catch (error) {
-            console.error('Error removing cooldown:', error);
-            logError(`Error removing cooldown: ${error.message}\nStack: ${error.stack}`);
+            console.error('Error removing cooldown');
+            logError('Error removing cooldown', error);
             return false;
         }
     }
@@ -623,8 +623,8 @@ class RedisClient {
                 details: null
             };
         } catch (error) {
-            console.error(`Error checking challenge ${key}:`, error);
-            logError(`Error checking challenge ${key}: ${error.message}\nStack: ${error.stack}`);
+            console.error('Error checking challenge');
+            logError('Error checking challenge', error);
             return {
                 active: false,
                 remainingTime: 0,
@@ -656,8 +656,8 @@ class RedisClient {
             
             return cooldowns;
         } catch (error) {
-            console.error('Error listing cooldowns:', error);
-            logError(`Error listing cooldowns: ${error.message}\nStack: ${error.stack}`);
+            console.error('Error listing cooldowns');
+            logError('Error listing cooldowns', error);
             return [];
         }
     }
@@ -686,8 +686,8 @@ class RedisClient {
             
             return challenges;
         } catch (error) {
-            console.error('Error listing challenges:', error);
-            logError(`Error listing challenges: ${error.message}\nStack: ${error.stack}`);
+            console.error('Error listing challenges');
+            logError('Error listing challenges', error);
             return [];
         }
     }
@@ -714,8 +714,8 @@ class RedisClient {
             
             return cooldowns;
         } catch (error) {
-            console.error('Error getting player cooldowns:', error);
-            logError(`Error getting player cooldowns: ${error.message}\nStack: ${error.stack}`);
+            console.error('Error getting player cooldowns');
+            logError('Error getting player cooldowns', error);
             return [];
         }
     }

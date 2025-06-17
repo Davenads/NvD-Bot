@@ -283,8 +283,7 @@ async function autoNullChallenges(client) {
     }
   } catch (error) {
     console.error(`└─ Error executing auto-null task: ${error.message}`);
-    console.error(error.stack);
-    logError(`Auto-null challenges task error: ${error.message}\nStack: ${error.stack}`);
+    logError('Auto-null challenges task error', error);
   }
 }
 

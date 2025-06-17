@@ -312,9 +312,8 @@ module.exports = {
                 });
             }
         } catch (error) {
-            console.error(`└─ Error executing nvd-nullchallenges command: ${error.message}`); // CHANGED: Updated command name
-            console.error(error.stack);
-            logError(`NvD nullchallenges command error: ${error.message}\nStack: ${error.stack}`); // CHANGED: Updated error logging prefix
+            console.error(`└─ Error executing nvd-nullchallenges command`); // CHANGED: Updated command name
+            logError('NvD nullchallenges command error', error); // CHANGED: Updated error logging prefix
             
             await interaction.editReply({
                 content: 'An error occurred while processing the command. Please try again later.'

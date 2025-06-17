@@ -353,10 +353,8 @@ module.exports = {
       })
       console.log('└─ Command completed successfully')
     } catch (error) {
-      console.error(`└─ Error: ${error.message}`)
-      logError(
-        `Error in nvd-reportwin command: ${error.message}\nStack: ${error.stack}` // CHANGED: Updated command name in error message
-      )
+      console.error(`└─ Error in reportwin command`)
+      logError('Error in nvd-reportwin command', error)
       await interaction.editReply({
         content:
           'An error occurred while reporting the match result. Please try again later.'

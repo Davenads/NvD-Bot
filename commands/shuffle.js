@@ -142,8 +142,8 @@ module.exports = {
                 flags: MessageFlags.Ephemeral
             });
         } catch (error) {
-            console.error(`└─ Error shuffling ladder:`, error);
-            logError(`Shuffle command error: ${error.message}\nStack: ${error.stack}`);
+            console.error(`└─ Error shuffling ladder`);
+            logError('Shuffle command error', error);
             return interaction.editReply({
                 content: 'An error occurred while shuffling the ladder. Please try again later.',
                 flags: MessageFlags.Ephemeral
