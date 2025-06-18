@@ -10,8 +10,6 @@ const WARNING_KEY_PREFIX = 'nvd:challenge-warning:';
 const COOLDOWN_KEY_PREFIX = 'nvd:cooldown:';
 const CHALLENGE_EXPIRY_TIME = 60 * 60 * 24 * 3; // 3 days in seconds
 const WARNING_EXPIRY_TIME = 60 * 60 * 24 * 2; // 2 days in seconds (warning at 24 hours left)
-const PLAYER_LOCK_EXPIRY_TIME = 60 * 60 * 24 * 3; // 3 days in seconds (same as challenge)
-const PROCESSING_LOCK_EXPIRY_TIME = 60 * 5; // 5 minutes for processing operations
 const NOTIFICATION_CHANNEL_ID = '1144011555378298910'; // NvD challenges channel
 
 class RedisClient {
@@ -318,13 +316,6 @@ class RedisClient {
             const targetRank = keyParts[1];
             const challengeKey = `${challengerRank}-${targetRank}`;
             
-            // Acquire distributed lock to prevent concurrent processing
-            const lock = await this.acquireProcessingLock(`expiry:${challengeKey}`);
-            if (!lock.acquired) {
-                console.log(`Skipping challenge expiry for ${challengeKey} - already being processed`);
-                return;
-            }
-
             try {
                 console.log(`🔒 Auto-nulling expired challenge: ${challengerRank} vs ${targetRank}`);
                 
@@ -499,11 +490,6 @@ class RedisClient {
                 } else {
                     console.error('Discord client not available for sending notification');
                 }
-                
-            } finally {
-                // Always release the processing lock
-                await this.releaseProcessingLock(lock.lockKey, lock.lockValue);
-            }
             
         } catch (error) {
             console.error('Error handling challenge expiry');

@@ -21,9 +21,8 @@ module.exports = {
     
     try {
       // Get all NvD Redis data
-      const challenges = await redisClient.listAllChallenges();
+      const challenges = await redisClient.getAllChallenges();
       const cooldowns = await redisClient.listAllCooldowns();
-      const playerLocks = await redisClient.listAllPlayerLocks();
       
       // Also get all NvD keys directly to catch any other data
       const allNvdKeys = await redisClient.client.keys('nvd:*');
@@ -46,8 +45,6 @@ module.exports = {
           { name: '⚔️ **Active Challenges**', value: `${challenges.length}`, inline: true },
           { name: '⚠️ **Challenge Warnings**', value: `${warningKeys.length}`, inline: true },
           { name: '❄️ **Player Cooldowns**', value: `${cooldowns.length}`, inline: true },
-          { name: '🔒 **Player Locks**', value: `${playerLocks.length}`, inline: true },
-          { name: '⚙️ **Processing Locks**', value: `${processingKeys.length}`, inline: true },
           { name: '📊 **Total NvD Keys**', value: `${allNvdKeys.length}`, inline: true }
         )
         .setTimestamp()

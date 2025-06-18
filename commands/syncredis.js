@@ -606,32 +606,20 @@ module.exports = {
                 }
                 
                 // Check for challenges without corresponding player locks and vice versa
-                const allChallenges = await redisClient.listAllChallenges();
-                const allLocks = await redisClient.listAllPlayerLocks();
+                const allChallenges = await redisClient.getAllChallenges();
                 
-                for (const challenge of allChallenges) {
-                    const challengerLock = await redisClient.checkPlayerLock(challenge.challenger.discordId);
-                    const targetLock = await redisClient.checkPlayerLock(challenge.target.discordId);
-                    
-                    if (!challengerLock.isLocked || !targetLock.isLocked) {
-                        console.log(`├─ WARNING: Challenge ${challenge.challenger.rank} vs ${challenge.target.rank} has missing player locks`);
-                        // Could add auto-repair logic here if needed
-                    }
-                }
-                
-                console.log(`├─ Cleanup completed: ${cleanupStats.orphanedPlayerLocks} player locks, ${cleanupStats.orphanedProcessingLocks} processing locks`);
+                console.log(`├─ Challenge verification: ${allChallenges.length} active challenges found`);
             }
 
             // Verification info
             if (!dryRun) {
-                const allLocks = await redisClient.listAllPlayerLocks();
-                const allChallenges = await redisClient.listAllChallenges();
+                const allChallenges = await redisClient.getAllChallenges();
                 const allCooldowns = await redisClient.listAllCooldowns();
                 
                 // Get fresh cooldown count after potential clearing
                 const finalCooldowns = clearCooldowns ? await redisClient.listAllCooldowns() : allCooldowns;
                 
-                let verificationText = `• Total player locks in Redis: **${allLocks.length}**\n• Total challenges in Redis: **${allChallenges.length}**\n• Total cooldowns in Redis: **${finalCooldowns.length}**`;
+                let verificationText = `• Total challenges in Redis: **${allChallenges.length}**\n• Total cooldowns in Redis: **${finalCooldowns.length}**`;
                 
                 if (cleanupOrphaned) {
                     verificationText += `\n• Orphaned player locks cleaned: **${cleanupStats.orphanedPlayerLocks}**\n• Processing locks cleaned: **${cleanupStats.orphanedProcessingLocks}**`;

@@ -210,38 +210,21 @@ module.exports = {
                 });
                 console.log(`├─ Batch update completed successfully`);
 
-                // NEW: Use atomic cleanup for Redis operations with distributed locking
-                console.log('├─ Performing atomic Redis cleanup...');
+                // Simple Redis cleanup aligned with SvS approach
+                console.log('├─ Performing Redis cleanup...');
                 const redisClient = require('../redis-client');
                 let successfulCleanups = 0;
                 let failedCleanups = [];
                 
                 for (const challenge of nullifiedChallenges) {
                     try {
-                        const cleanupResult = await redisClient.atomicChallengeCleanup(
-                            challenge.playerRank,
-                            challenge.opponentRank, 
-                            challenge.playerDiscordId,
-                            challenge.opponentDiscordId
-                        );
-                        
-                        if (cleanupResult.success) {
-                            successfulCleanups++;
-                            console.log(`│  ├─ ✅ Redis cleanup successful for ${challenge.playerRank} vs ${challenge.opponentRank}`);
-                        } else if (cleanupResult.alreadyProcessing) {
-                            console.log(`│  ├─ ⏭️ Challenge ${challenge.playerRank} vs ${challenge.opponentRank} already being processed`);
-                            successfulCleanups++; // Count as successful since it's being handled
-                        } else {
-                            failedCleanups.push({
-                                challenge: `${challenge.playerRank} vs ${challenge.opponentRank}`,
-                                errors: cleanupResult.errors
-                            });
-                            console.warn(`│  ├─ ⚠️ Redis cleanup had issues for ${challenge.playerRank} vs ${challenge.opponentRank}:`, cleanupResult.errors);
-                        }
+                        await redisClient.removeChallenge(challenge.playerRank, challenge.opponentRank);
+                        successfulCleanups++;
+                        console.log(`│  ├─ ✅ Redis cleanup successful for ${challenge.playerRank} vs ${challenge.opponentRank}`);
                     } catch (cleanupError) {
                         failedCleanups.push({
                             challenge: `${challenge.playerRank} vs ${challenge.opponentRank}`,
-                            errors: [cleanupError.message]
+                            error: cleanupError.message
                         });
                         console.error(`│  ├─ ❌ Redis cleanup failed for ${challenge.playerRank} vs ${challenge.opponentRank}:`, cleanupError);
                     }
@@ -249,7 +232,7 @@ module.exports = {
                 
                 console.log(`├─ Redis cleanup completed: ${successfulCleanups}/${nullifiedChallenges.length} successful`);
                 if (failedCleanups.length > 0) {
-                    console.warn(`├─ ${failedCleanups.length} Redis cleanups had issues:`, failedCleanups);
+                    console.warn(`├─ ${failedCleanups.length} Redis cleanups failed:`, failedCleanups);
                 }
                 // Create embed message
                 const embed = new EmbedBuilder()

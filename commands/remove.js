@@ -303,109 +303,23 @@ module.exports = {
         })
       }
 
-      // Redis cleanup and updates
-      console.log('├─ Starting Redis cleanup and updates...')
+      // Redis cleanup - simple approach aligned with SvS
+      console.log('├─ Starting Redis cleanup...')
       
-      // 1. Clean up Redis data for the removed player
-      if (playerData[2] === 'Challenge' && playerData[4]) { // CHANGED: Status is column C (index 2), Opp# is column E (index 4)
-        const opponentRank = parseInt(playerData[4]) // CHANGED: Opp# is column E (index 4)
-        console.log(`├─ Removing Redis challenge keys for ranks ${rankToRemove} and ${opponentRank}`)
+      // Clean up Redis data for the removed player if they have an active challenge
+      if (playerData[2] === 'Challenge' && playerData[4]) { // Status is column C (index 2), Opp# is column E (index 4)
+        const opponentRank = parseInt(playerData[4])
+        console.log(`├─ Removing Redis challenge for ranks ${rankToRemove} and ${opponentRank}`)
         
-        // Remove the challenge keys involving the removed player
-        await redisClient.removeChallenge(rankToRemove, opponentRank)
-        
-        // Remove player locks for both players
-        if (discordId) {
-          await redisClient.removePlayerLock(discordId)
-          console.log(`├─ Removed player lock for removed player: ${discordId}`)
-        }
-        
-        // Find and remove opponent's player lock
-        const opponentData = rows.find(row => parseInt(row[0]) === opponentRank)
-        if (opponentData && opponentData[5]) { // CHANGED: Discord ID is column F (index 5)
-          await redisClient.removePlayerLock(opponentData[5])
-          console.log(`├─ Removed player lock for opponent: ${opponentData[5]}`)
+        try {
+          await redisClient.removeChallenge(rankToRemove, opponentRank)
+          console.log(`├─ Successfully removed challenge from Redis`)
+        } catch (error) {
+          console.error(`├─ Error removing challenge from Redis:`, error)
         }
       }
       
-      // 2. Update all Redis challenge keys affected by rank shifts
-      console.log('├─ Updating Redis challenge keys for rank shifts...')
-      
-      // Get all active challenges from Redis
-      const activeChallenges = await redisClient.listAllChallenges()
-      
-      // Process each challenge to see if ranks need updating
-      for (const challenge of activeChallenges) {
-        const challengerRank = parseInt(challenge.challenger.rank)
-        const targetRank = parseInt(challenge.target.rank)
-        
-        let needsUpdate = false
-        let newChallengerRank = challengerRank
-        let newTargetRank = targetRank
-        
-        // Check if challenger rank needs updating (if they were below the removed player)
-        if (challengerRank > rankToRemove) {
-          newChallengerRank = challengerRank - 1
-          needsUpdate = true
-        }
-        
-        // Check if target rank needs updating (if they were below the removed player)  
-        if (targetRank > rankToRemove) {
-          newTargetRank = targetRank - 1
-          needsUpdate = true
-        }
-        
-        // If ranks changed, update the Redis keys
-        if (needsUpdate) {
-          console.log(`├─ Updating challenge: ${challengerRank}:${targetRank} → ${newChallengerRank}:${newTargetRank}`)
-          
-          // Get the current challenge data
-          const oldChallengeKey = `nvd:challenge:${challengerRank}:${targetRank}`
-          const challengeData = await redisClient.client.get(oldChallengeKey)
-          
-          if (challengeData) {
-            // Parse and update the challenge data with new ranks
-            const challenge = JSON.parse(challengeData)
-            challenge.challenger.rank = newChallengerRank
-            challenge.target.rank = newTargetRank
-            
-            // Calculate remaining TTL from the old key
-            const remainingTTL = await redisClient.client.ttl(oldChallengeKey)
-            
-            // Remove old keys
-            await redisClient.removeChallenge(challengerRank, targetRank)
-            
-            // Create new keys with updated ranks if TTL is still valid
-            if (remainingTTL > 0) {
-              await redisClient.setChallengeWithTTL(
-                challenge.challenger,
-                challenge.target,
-                null, // Discord client not needed for this operation
-                remainingTTL
-              )
-              
-              // Update player locks with new challenge key
-              const newChallengeKey = `nvd:challenge:${newChallengerRank}:${newTargetRank}`
-              if (challenge.challenger.discordId) {
-                await redisClient.setPlayerLockWithTTL(challenge.challenger.discordId, newChallengeKey, remainingTTL)
-              }
-              if (challenge.target.discordId) {
-                await redisClient.setPlayerLockWithTTL(challenge.target.discordId, newChallengeKey, remainingTTL)
-              }
-              
-              console.log(`├─ Successfully updated Redis challenge keys`)
-            }
-          }
-        }
-      }
-      
-      // 3. Clean up any orphaned player locks
-      const cleanedLocks = await redisClient.cleanupOrphanedPlayerLocks()
-      if (cleanedLocks > 0) {
-        console.log(`├─ Cleaned ${cleanedLocks} orphaned player locks`)
-      }
-      
-      console.log('└─ Redis cleanup and updates completed')
+      console.log('└─ Redis cleanup completed')
       // Verify ranks
       const verificationResult = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
