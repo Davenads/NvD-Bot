@@ -312,10 +312,15 @@ module.exports = {
         console.log(`├─ Removing Redis challenge for ranks ${rankToRemove} and ${opponentRank}`)
         
         try {
-          await redisClient.removeChallenge(rankToRemove, opponentRank)
-          console.log(`├─ Successfully removed challenge from Redis`)
+          const redisSuccess = await redisClient.removeChallenge(rankToRemove, opponentRank)
+          if (!redisSuccess) {
+            console.error(`├─ Redis cleanup failed but continuing with success`)
+          } else {
+            console.log(`├─ Successfully removed challenge from Redis`)
+          }
         } catch (error) {
           console.error(`├─ Error removing challenge from Redis:`, error)
+          // Don't throw - log but continue with success since Google Sheets succeeded
         }
       }
       

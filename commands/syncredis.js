@@ -33,11 +33,6 @@ module.exports = {
                 .setRequired(false)
         )
         .addBooleanOption(option =>
-            option.setName('cleanup_orphaned')
-                .setDescription('Clean up stale Redis data (warning keys without challenges)')
-                .setRequired(false)
-        )
-        .addBooleanOption(option =>
             option.setName('show_cooldowns')
                 .setDescription('Display all current cooldowns for verification')
                 .setRequired(false)
@@ -65,13 +60,12 @@ module.exports = {
 
         const force = interaction.options.getBoolean('force') || false;
         const dryRun = interaction.options.getBoolean('dry_run') || false;
-        const cleanupOrphaned = interaction.options.getBoolean('cleanup_orphaned') || false;
         const showCooldowns = interaction.options.getBoolean('show_cooldowns') || false;
         const clearCooldowns = interaction.options.getBoolean('clear_cooldowns') || false;
         const validateRedis = false; // Disabled for stability
         const fixPlayerLock = null; // Disabled for stability
 
-        console.log(`├─ Options: force=${force}, dry_run=${dryRun}, cleanup_orphaned=${cleanupOrphaned}, show_cooldowns=${showCooldowns}, clear_cooldowns=${clearCooldowns}`);
+        console.log(`├─ Options: force=${force}, dry_run=${dryRun}, show_cooldowns=${showCooldowns}, clear_cooldowns=${clearCooldowns}`);
 
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -99,164 +93,6 @@ module.exports = {
             const rows = result.data.values || [];
             console.log(`├─ Found ${rows.length} total rows in spreadsheet`);
             
-            // Player lock fix disabled for stability
-            if (false) {
-                console.log(`├─ Fixing player lock for ${fixPlayerLock.tag} (${fixPlayerLock.id})...`);
-                
-                // Find the player in the spreadsheet
-                const playerRow = rows.find(row => row[5] === fixPlayerLock.id); // Discord ID in column F
-                
-                if (!playerRow) {
-                    return await interaction.editReply({
-                        content: `❌ Player ${fixPlayerLock.tag} not found in the NvD ladder.`
-                    });
-                }
-                
-                const playerRank = playerRow[0];
-                const playerStatus = playerRow[2]; // Status in column C
-                const playerName = playerRow[1]; // Discord username in column B
-                
-                // Check current Redis state (simplified)
-                const allChallenges = await redisClient.getAllChallenges();
-                const playerChallenges = allChallenges.filter(c => 
-                    c.player1.discordId === fixPlayerLock.id || 
-                    c.player2.discordId === fixPlayerLock.id
-                );
-                
-                let fixResult = { fixed: [], issues: [] };
-                
-                console.log(`│  ├─ Player: ${playerName} (Rank #${playerRank}, Status: ${playerStatus})`);
-                console.log(`│  ├─ Redis lock: ${playerLock.isLocked ? 'LOCKED' : 'NOT LOCKED'}`);
-                console.log(`│  └─ Active challenges in Redis: ${playerChallenges.length}`);
-                
-                // If player is Available in sheets but locked in Redis, remove the lock
-                if (playerStatus === 'Available' && playerLock.isLocked) {
-                    console.log(`│  ├─ Removing orphaned Redis lock for ${playerName}...`);
-                    await redisClient.removePlayerLock(fixPlayerLock.id);
-                    fixResult.fixed.push(`Removed orphaned Redis lock for ${playerName}`);
-                }
-                
-                // If player has challenges in Redis but is Available in sheets, clean them up
-                if (playerStatus === 'Available' && playerChallenges.length > 0) {
-                    console.log(`│  ├─ Cleaning up ${playerChallenges.length} orphaned challenges...`);
-                    for (const challenge of playerChallenges) {
-                        const cleanupResult = await redisClient.atomicChallengeCleanup(
-                            challenge.challenger.rank,
-                            challenge.target.rank,
-                            challenge.challenger.discordId,
-                            challenge.target.discordId
-                        );
-                        if (cleanupResult.success) {
-                            fixResult.fixed.push(`Cleaned up challenge: ${challenge.challenger.rank} vs ${challenge.target.rank}`);
-                        } else {
-                            fixResult.issues.push(`Failed to clean challenge: ${challenge.challenger.rank} vs ${challenge.target.rank}`);
-                        }
-                    }
-                }
-                
-                // If player is in Challenge status in sheets but has no Redis data, this might be okay
-                if (playerStatus === 'Challenge' && !playerLock.isLocked && playerChallenges.length === 0) {
-                    fixResult.issues.push(`Player shows as 'Challenge' in sheets but has no Redis data - may need manual sync`);
-                }
-                
-                const fixEmbed = new EmbedBuilder()
-                    .setColor(fixResult.issues.length > 0 ? '#FFA500' : '#00FF00')
-                    .setTitle(`🔧 Player Lock Fix: ${playerName}`)
-                    .setDescription(`Diagnosed and fixed Redis issues for ${fixPlayerLock.tag}`)
-                    .addFields(
-                        {
-                            name: '📊 Player Status',
-                            value: `• Rank: #${playerRank}\n• Sheet Status: ${playerStatus}\n• Redis Lock: ${playerLock.isLocked ? 'LOCKED' : 'NOT LOCKED'}\n• Active Challenges: ${playerChallenges.length}`,
-                            inline: false
-                        }
-                    )
-                    .setTimestamp();
-                
-                if (fixResult.fixed.length > 0) {
-                    fixEmbed.addFields({
-                        name: '✅ Fixes Applied',
-                        value: fixResult.fixed.map(fix => `• ${fix}`).join('\n'),
-                        inline: false
-                    });
-                }
-                
-                if (fixResult.issues.length > 0) {
-                    fixEmbed.addFields({
-                        name: '⚠️ Issues Found',
-                        value: fixResult.issues.map(issue => `• ${issue}`).join('\n'),
-                        inline: false
-                    });
-                }
-                
-                console.log(`└─ Player lock fix completed for ${playerName}: ${fixResult.fixed.length} fixes, ${fixResult.issues.length} issues`);
-                
-                // If only fixing player lock, return early
-                if (!force && !showCooldowns && !clearCooldowns && !cleanupOrphaned && !validateRedis) {
-                    return await interaction.editReply({ embeds: [fixEmbed] });
-                }
-                
-                // Store fix embed for later
-                interaction.fixEmbed = fixEmbed;
-            }
-            
-            // Redis validation simplified
-            if (false) {
-                console.log('├─ Running comprehensive Redis validation...');
-                const validationResult = await redisClient.validateAndRepairRedisData(rows);
-                
-                const validationEmbed = new EmbedBuilder()
-                    .setColor(validationResult.success ? '#00FF00' : '#FF0000')
-                    .setTitle('🔍 Redis Validation Results')
-                    .setDescription(
-                        validationResult.success 
-                            ? 'Redis validation completed successfully!' 
-                            : `Validation failed: ${validationResult.error}`
-                    )
-                    .addFields(
-                        {
-                            name: '📊 Summary',
-                            value: validationResult.summary ? 
-                                `• Challenges: ${validationResult.summary.challenges}\n• Player locks: ${validationResult.summary.playerLocks}\n• Cooldowns: ${validationResult.summary.cooldowns}\n• Issues found: ${validationResult.summary.issuesFound}\n• Repairs made: ${validationResult.summary.repairsMade}` :
-                                'Validation data unavailable',
-                            inline: false
-                        }
-                    )
-                    .setTimestamp();
-                
-                if (validationResult.issues && validationResult.issues.length > 0) {
-                    const issuesList = validationResult.issues
-                        .slice(0, 10)
-                        .map(issue => `• ${issue.type}: ${issue.challenge || issue.discordId || 'N/A'}`)
-                        .join('\n');
-                    
-                    validationEmbed.addFields({
-                        name: '⚠️ Issues Found',
-                        value: issuesList + (validationResult.issues.length > 10 ? `\n... and ${validationResult.issues.length - 10} more` : ''),
-                        inline: false
-                    });
-                }
-                
-                if (validationResult.repairs && validationResult.repairs.length > 0) {
-                    const repairsList = validationResult.repairs
-                        .slice(0, 10)
-                        .map(repair => `• ${repair}`)
-                        .join('\n');
-                    
-                    validationEmbed.addFields({
-                        name: '🔧 Repairs Made',
-                        value: repairsList + (validationResult.repairs.length > 10 ? `\n... and ${validationResult.repairs.length - 10} more` : ''),
-                        inline: false
-                    });
-                }
-                
-                // If only validation was requested, return early
-                if (!force && !showCooldowns && !clearCooldowns && !cleanupOrphaned) {
-                    return await interaction.editReply({ embeds: [validationEmbed] });
-                }
-                
-                // Store validation embed for later
-                interaction.validationEmbed = validationEmbed;
-            }
 
             // Find all active challenges
             const challengePlayers = rows.filter(row => 
@@ -275,12 +111,13 @@ module.exports = {
                 
                 if (clearCooldowns && !dryRun) {
                     console.log(`├─ Clearing ${allCooldowns.length} cooldowns...`);
-                    const clearResult = await redisClient.clearAllCooldowns();
-                    if (clearResult.success) {
-                        console.log(`├─ Successfully cleared ${clearResult.count} cooldown entries`);
-                    } else {
-                        console.error(`├─ Error clearing cooldowns: ${clearResult.error}`);
+                    // Clear each cooldown individually like SvS
+                    let clearedCount = 0;
+                    for (const cooldown of allCooldowns) {
+                        const success = await redisClient.removeCooldown(cooldown.player1, cooldown.player2);
+                        if (success) clearedCount++;
                     }
+                    console.log(`├─ Successfully cleared ${clearedCount} cooldown entries`);
                 }
 
                 if (showCooldowns || dryRun) {
@@ -332,24 +169,21 @@ module.exports = {
             }
 
             // Group into challenge pairs
-            const activePartners = new Map(); // rank -> opponent rank
             const challengePairs = [];
             const processedPairs = new Set();
 
-            challengePlayers.forEach(player => {
-                activePartners.set(player[0], player[4]);
-            });
-
             for (const player of challengePlayers) {
                 const rank = player[0];
-                const opponentRank = player[4];
-                const pairKey = [rank, opponentRank].sort().join('-');
+                const discordName = player[1]; // Discord username in column B
+                const opponentRank = player[4]; // Opponent rank in column E
+                const discordId = player[5]; // Discord ID in column F
+                const challengeDate = player[3]; // Challenge date in column D
 
+                const pairKey = [rank, opponentRank].sort().join('-');
                 if (processedPairs.has(pairKey)) continue;
 
                 // Find the opponent
                 const opponent = challengePlayers.find(p => p[0] === opponentRank);
-
                 if (!opponent) {
                     console.log(`├─ WARNING: Could not find opponent for rank ${rank} vs ${opponentRank}`);
                     continue;
@@ -364,49 +198,21 @@ module.exports = {
                 processedPairs.add(pairKey);
 
                 challengePairs.push({
-                    challenger: {
+                    player1: {
                         rank: rank,
-                        discordName: player[1],
-                        discordId: player[5],
-                        challengeDate: player[3]
+                        name: discordName,
+                        discordId: discordId
                     },
-                    target: {
+                    player2: {
                         rank: opponentRank,
-                        discordName: opponent[1],
-                        discordId: opponent[5],
-                        challengeDate: opponent[3]
-                    }
+                        name: opponent[1], // opponent discord name
+                        discordId: opponent[5] // opponent discord ID
+                    },
+                    challengeDate: challengeDate
                 });
             }
 
             console.log(`├─ Identified ${challengePairs.length} valid challenge pairs`);
-
-            // For large datasets, process in background and send immediate response
-            if (challengePairs.length > 10 && !dryRun) {
-                // Start background processing
-                setImmediate(async () => {
-                    try {
-                        await processChallengePairsAsync(challengePairs, force, interaction.client);
-                        console.log(`└─ Background sync completed for ${challengePairs.length} pairs`);
-                    } catch (bgError) {
-                        console.error('Background sync error:', bgError);
-                    }
-                });
-
-                // Send immediate response
-                const quickEmbed = new EmbedBuilder()
-                    .setColor('#FFA500')
-                    .setTitle('⚡ Redis Sync Started')
-                    .setDescription(`Found ${challengePairs.length} challenge pairs. Sync is running in background.`)
-                    .addFields({
-                        name: '📝 Note',
-                        value: 'Large sync operation detected. Processing in background to avoid timeout.',
-                        inline: false
-                    })
-                    .setTimestamp();
-
-                return await interaction.editReply({ embeds: [quickEmbed] });
-            }
 
             // Check existing Redis entries
             let existingCount = 0;
@@ -415,35 +221,31 @@ module.exports = {
             const syncResults = [];
 
             for (const pair of challengePairs) {
-                const challengeKey = `nvd:challenge:${pair.challenger.rank}:${pair.target.rank}`;
-                
                 // Check if challenge already exists in Redis
-                const existingChallenge = await redisClient.client.get(challengeKey);
-                const challengerLock = await redisClient.checkPlayerLock(pair.challenger.discordId);
-                const targetLock = await redisClient.checkPlayerLock(pair.target.discordId);
+                const existingChallenge = await redisClient.checkChallenge(pair.player1.rank, pair.player2.rank);
 
-                if ((existingChallenge || challengerLock.isLocked || targetLock.isLocked) && !force) {
-                    console.log(`├─ SKIP: Challenge ${pair.challenger.rank} vs ${pair.target.rank} already exists in Redis`);
+                if (existingChallenge.active && !force) {
+                    console.log(`├─ SKIP: Challenge ${pair.player1.rank} vs ${pair.player2.rank} already exists in Redis`);
                     existingCount++;
                     syncResults.push({
                         status: 'skipped',
-                        challenger: pair.challenger.discordName,
-                        challengerRank: pair.challenger.rank,
-                        target: pair.target.discordName,
-                        targetRank: pair.target.rank,
+                        player1: pair.player1.name,
+                        player1Rank: pair.player1.rank,
+                        player2: pair.player2.name,
+                        player2Rank: pair.player2.rank,
                         reason: 'Already exists'
                     });
                     continue;
                 }
 
                 if (dryRun) {
-                    console.log(`├─ DRY RUN: Would sync challenge ${pair.challenger.rank} vs ${pair.target.rank}`);
+                    console.log(`├─ DRY RUN: Would sync challenge ${pair.player1.rank} vs ${pair.player2.rank}`);
                     syncResults.push({
                         status: 'would_sync',
-                        challenger: pair.challenger.discordName,
-                        challengerRank: pair.challenger.rank,
-                        target: pair.target.discordName,
-                        targetRank: pair.target.rank,
+                        player1: pair.player1.name,
+                        player1Rank: pair.player1.rank,
+                        player2: pair.player2.name,
+                        player2Rank: pair.player2.rank,
                         reason: 'Ready to sync'
                     });
                     syncedCount++;
@@ -452,86 +254,32 @@ module.exports = {
 
                 // Actually sync to Redis
                 try {
-                    console.log(`├─ SYNC: Creating Redis entries for ${pair.challenger.rank} vs ${pair.target.rank}`);
+                    console.log(`├─ SYNC: Creating Redis entries for ${pair.player1.rank} vs ${pair.player2.rank}`);
 
-                    // Calculate remaining time from original challenge date
-                    let customTTL = null;
-                    if (pair.challenger.challengeDate) {
-                        const moment = require('moment-timezone');
-                        const dateFormat = 'M/D, h:mm A';
-                        
-                        // Extract timezone from the date string
-                        const timezoneMatch = pair.challenger.challengeDate.match(/\s+(EST|EDT)$/i);
-                        const detectedTZ = timezoneMatch ? timezoneMatch[1].toUpperCase() : null;
-                        const cleanDateStr = pair.challenger.challengeDate.replace(/\s+(EST|EDT)$/i, '').trim();
-                        
-                        // Parse in the correct timezone context
-                        let challengeStart;
-                        if (detectedTZ === 'EDT') {
-                            // EDT is UTC-4, parse as Eastern Daylight Time
-                            challengeStart = moment.tz(cleanDateStr, dateFormat, 'America/New_York');
-                        } else if (detectedTZ === 'EST') {
-                            // EST is UTC-5, parse as Eastern Standard Time
-                            challengeStart = moment.tz(cleanDateStr, dateFormat, 'America/New_York');
-                        } else {
-                            // No timezone specified, assume current NY timezone
-                            challengeStart = moment.tz(cleanDateStr, dateFormat, 'America/New_York');
-                        }
-                        
-                        console.log(`├─ Parsing date: "${pair.challenger.challengeDate}" -> detected TZ: ${detectedTZ || 'none'} -> parsed: ${challengeStart.format()}`);
-                        
-                        if (challengeStart.isValid()) {
-                            const now = moment().tz('America/New_York');
-                            const currentYear = now.year();
-                            
-                            // Handle year assignment
-                            if (challengeStart.month() > now.month() || 
-                                (challengeStart.month() === now.month() && challengeStart.date() > now.date())) {
-                                challengeStart.year(currentYear - 1);
-                            } else {
-                                challengeStart.year(currentYear);
-                            }
-                            
-                            const elapsedHours = now.diff(challengeStart, 'hours');
-                            const remainingHours = Math.max(0, (3 * 24) - elapsedHours); // 3 days = 72 hours
-                            
-                            if (remainingHours > 0) {
-                                customTTL = Math.ceil(remainingHours * 3600); // Convert to seconds
-                                console.log(`├─ Custom TTL: ${remainingHours.toFixed(1)} hours remaining (${customTTL}s)`);
-                            } else {
-                                console.log(`├─ WARNING: Challenge is expired (${(-remainingHours).toFixed(1)} hours overdue)`);
-                                // Still sync but with short TTL for cleanup
-                                customTTL = 300; // 5 minutes
-                            }
-                        }
-                    }
-
-                    // Set challenge in Redis with calculated TTL based on cDate
-                    await redisClient.setChallenge(pair.challenger, pair.target, pair.challenger.challengeDate || '', customTTL);
+                    // Set challenge in Redis
+                    await redisClient.setChallenge(pair.player1, pair.player2, pair.challengeDate || '');
                     
-                    // Player locks removed for simplified approach (matching SvS-Bot-2)
-
                     syncedCount++;
                     syncResults.push({
                         status: 'synced',
-                        challenger: pair.challenger.discordName,
-                        challengerRank: pair.challenger.rank,
-                        target: pair.target.discordName,
-                        targetRank: pair.target.rank,
+                        player1: pair.player1.name,
+                        player1Rank: pair.player1.rank,
+                        player2: pair.player2.name,
+                        player2Rank: pair.player2.rank,
                         reason: 'Successfully synced'
                     });
 
-                    console.log(`├─ SUCCESS: Synced ${pair.challenger.discordName} vs ${pair.target.discordName}`);
+                    console.log(`├─ SUCCESS: Synced ${pair.player1.name} vs ${pair.player2.name}`);
 
                 } catch (syncError) {
-                    console.error(`├─ ERROR: Failed to sync ${pair.challenger.rank} vs ${pair.target.rank}:`, syncError);
+                    console.error(`├─ ERROR: Failed to sync ${pair.player1.rank} vs ${pair.player2.rank}:`, syncError);
                     skippedCount++;
                     syncResults.push({
                         status: 'error',
-                        challenger: pair.challenger.discordName,
-                        challengerRank: pair.challenger.rank,
-                        target: pair.target.discordName,
-                        targetRank: pair.target.rank,
+                        player1: pair.player1.name,
+                        player1Rank: pair.player1.rank,
+                        player2: pair.player2.name,
+                        player2Rank: pair.player2.rank,
                         reason: `Error: ${syncError.message}`
                     });
                 }
@@ -573,7 +321,7 @@ module.exports = {
                             'error': '❌'
                         }[r.status] || '❓';
                         
-                        return `${statusEmoji} Rank #${r.challengerRank} ${r.challenger} vs Rank #${r.targetRank} ${r.target}`;
+                        return `${statusEmoji} Rank #${r.player1Rank} ${r.player1} vs Rank #${r.player2Rank} ${r.player2}`;
                     })
                     .join('\n');
 
@@ -584,32 +332,6 @@ module.exports = {
                 });
             }
 
-            // Cleanup orphaned data if requested
-            let cleanupStats = {
-                orphanedPlayerLocks: 0,
-                orphanedProcessingLocks: 0,
-                staleData: 0
-            };
-
-            if (cleanupOrphaned && !dryRun) {
-                console.log('├─ Performing orphaned data cleanup...');
-                
-                // Clean up orphaned player locks
-                cleanupStats.orphanedPlayerLocks = await redisClient.cleanupOrphanedPlayerLocks();
-                
-                // Clean up any orphaned processing locks (they're temporary anyway)
-                const processingKeys = await redisClient.client.keys('nvd:processing:lock:*');
-                if (processingKeys.length > 0) {
-                    await redisClient.client.del(...processingKeys);
-                    cleanupStats.orphanedProcessingLocks = processingKeys.length;
-                    console.log(`├─ Cleaned ${processingKeys.length} orphaned processing locks`);
-                }
-                
-                // Check for challenges without corresponding player locks and vice versa
-                const allChallenges = await redisClient.getAllChallenges();
-                
-                console.log(`├─ Challenge verification: ${allChallenges.length} active challenges found`);
-            }
 
             // Verification info
             if (!dryRun) {
@@ -621,9 +343,6 @@ module.exports = {
                 
                 let verificationText = `• Total challenges in Redis: **${allChallenges.length}**\n• Total cooldowns in Redis: **${finalCooldowns.length}**`;
                 
-                if (cleanupOrphaned) {
-                    verificationText += `\n• Orphaned player locks cleaned: **${cleanupStats.orphanedPlayerLocks}**\n• Processing locks cleaned: **${cleanupStats.orphanedProcessingLocks}**`;
-                }
                 
                 if (clearCooldowns) {
                     const clearedCount = allCooldowns.length - finalCooldowns.length;
@@ -642,8 +361,6 @@ module.exports = {
             // Collect all embeds to send
             const embeds = [embed];
             if (interaction.cooldownEmbed) embeds.push(interaction.cooldownEmbed);
-            if (interaction.validationEmbed) embeds.push(interaction.validationEmbed);
-            if (interaction.fixEmbed) embeds.push(interaction.fixEmbed);
             
             await interaction.editReply({ embeds: embeds });
 

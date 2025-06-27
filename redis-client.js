@@ -490,6 +490,10 @@ class RedisClient {
                 } else {
                     console.error('Discord client not available for sending notification');
                 }
+            } catch (error) {
+                console.error('Error during challenge auto-null process');
+                logError('Error during challenge auto-null process', error);
+            }
             
         } catch (error) {
             console.error('Error handling challenge expiry');
