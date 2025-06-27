@@ -3,6 +3,7 @@ const Redis = require('ioredis');
 const { logError } = require('./logger');
 const { google } = require('googleapis');
 const { EmbedBuilder } = require('discord.js');
+const { EventEmitter } = require('events');
 
 // Constants for Redis keys - keep nvd: prefix for namespace separation but simplify structure
 const CHALLENGE_KEY_PREFIX = 'nvd:challenge:';
@@ -12,26 +13,26 @@ const CHALLENGE_EXPIRY_TIME = 60 * 60 * 24 * 3; // 3 days in seconds
 const WARNING_EXPIRY_TIME = 60 * 60 * 24 * 2; // 2 days in seconds (warning at 24 hours left)
 const NOTIFICATION_CHANNEL_ID = '1144011555378298910'; // NvD challenges channel
 
-class RedisClient {
-    constructor() {
-        let redisConfig = {};
-
-        // Parse Redis Cloud URL if available
+class RedisClient extends EventEmitter {
+    // Helper method to determine Redis configuration based on environment
+    getRedisConfig() {
+        // Check if running on Heroku with RedisCloud
         if (process.env.REDISCLOUD_URL) {
+            // Parse the RedisCloud URL
             const redisUrl = new URL(process.env.REDISCLOUD_URL);
-            redisConfig = {
+            return {
                 host: redisUrl.hostname,
-                port: redisUrl.port,
-                password: redisUrl.password ? redisUrl.password : undefined,
-                username: redisUrl.username === 'default' ? undefined : redisUrl.username,
+                port: parseInt(redisUrl.port),
+                password: redisUrl.password ? redisUrl.password : null,
+                tls: redisUrl.protocol === 'rediss:' ? {} : null,
                 retryStrategy: (times) => {
                     const delay = Math.min(times * 50, 2000);
                     return delay;
                 }
             };
         } else {
-            // Fallback to individual environment variables
-            redisConfig = {
+            // Local or custom Redis configuration
+            return {
                 host: process.env.REDIS_HOST || 'localhost',
                 port: process.env.REDIS_PORT || 6379,
                 password: process.env.REDIS_PASSWORD,
@@ -41,106 +42,65 @@ class RedisClient {
                 }
             };
         }
+    }
 
-        // Use the config
+    constructor() {
+        super();
+
+        // Configure Redis clients based on environment
+        const redisConfig = this.getRedisConfig();
+
+        // Main client for regular operations
         this.client = new Redis(redisConfig);
 
+        // Separate subscription client for keyspace notifications
+        this.subClient = new Redis(redisConfig);
+
         this.client.on('error', (err) => {
-            console.error('❌ Redis Client Error');
+            console.error('Redis Client Error:', err);
             logError('Redis Client Error', err);
         });
 
         this.client.on('connect', () => {
-            console.log('✅ Redis Client Connected');
+            console.log('Redis Client Connected');
+            // Configure Redis to enable keyspace events for expired keys
+            this.client.config('SET', 'notify-keyspace-events', 'Ex');
         });
         
-        this.client.on('reconnecting', (delay) => {
-            console.log(`🔄 Redis reconnecting in ${delay}ms...`);
+        this.subClient.on('error', (err) => {
+            console.error('Redis Subscription Client Error:', err);
+            logError('Redis Subscription Client Error', err);
         });
-        
-        this.client.on('end', () => {
-            console.log('🔌 Redis connection ended');
-        });
-        
-        // Set up the expiry event listener if not already configured
-        this.setupExpiryListener();
-    }
-    
-    // Configure Redis to notify on key expirations
-    async setupExpiryListener() {
-        try {
-            // Check if notifications are already enabled
-            const config = await this.client.config('GET', 'notify-keyspace-events');
-            const currentConfig = config[1];
-            
-            // Configure Redis to notify of expired events if not already enabled
-            // 'Ex' means we want to be notified when a key expires
-            if (!currentConfig.includes('E') || !currentConfig.includes('x')) {
-                let newConfig = currentConfig;
-                if (!newConfig.includes('E')) newConfig += 'E';
-                if (!newConfig.includes('x')) newConfig += 'x';
-                await this.client.config('SET', 'notify-keyspace-events', newConfig);
-                console.log('Redis configured for key expiry notifications');
-            }
-            
-            // Create a separate subscription client (Redis requires a dedicated connection for pub/sub)
-            let subRedisConfig = {};
 
-            // Parse Redis Cloud URL if available
-            if (process.env.REDISCLOUD_URL) {
-                const redisUrl = new URL(process.env.REDISCLOUD_URL);
-                subRedisConfig = {
-                    host: redisUrl.hostname,
-                    port: redisUrl.port,
-                    password: redisUrl.password ? redisUrl.password : undefined,
-                    username: redisUrl.username === 'default' ? undefined : redisUrl.username,
-                    retryStrategy: (times) => {
-                        return Math.min(times * 50, 2000);
-                    }
-                };
-            } else {
-                // Fallback to individual environment variables
-                subRedisConfig = {
-                    host: process.env.REDIS_HOST || 'localhost',
-                    port: process.env.REDIS_PORT || 6379,
-                    password: process.env.REDIS_PASSWORD,
-                    retryStrategy: (times) => {
-                        return Math.min(times * 50, 2000);
-                    }
-                };
-            }
-
-            this.subClient = new Redis(subRedisConfig);
-            
-            // Subscribe to expiry events
+        this.subClient.on('connect', () => {
+            console.log('Redis Subscription Client Connected');
+            // Subscribe to expiration events
             this.subClient.subscribe('__keyevent@0__:expired');
-            console.log('Redis subscribed to expiry events');
+        });
+        
+        // Handle expiration events
+        this.subClient.on('message', (channel, message) => {
+            console.log(`Received message from channel ${channel}: ${message}`);
             
-            // Set up handler for expiry events
-            this.subClient.on('message', async (channel, key) => {
-                console.log(`Received expiry event for key: ${key}`);
-                
-                // Handle challenge expiry - only process nvd challenge keys
-                if (key.startsWith(CHALLENGE_KEY_PREFIX)) {
+            // Handle challenge expirations
+            if (channel === '__keyevent@0__:expired') {
+                if (message.startsWith(CHALLENGE_KEY_PREFIX)) {
+                    console.log(`Challenge key expired: ${message}`);
+                    this.emit('challengeExpired', message);
                     // Add small delay to ensure the key has fully expired
                     setTimeout(async () => {
-                        await this.handleChallengeExpiry(key);
+                        await this.handleChallengeExpiry(message);
                     }, 100);
-                }
-                
-                // Handle warning expiry (time to send warning)
-                if (key.startsWith(WARNING_KEY_PREFIX)) {
+                } else if (message.startsWith(WARNING_KEY_PREFIX)) {
+                    console.log(`Challenge warning key expired: ${message}`);
+                    this.emit('challengeWarning', message.replace(WARNING_KEY_PREFIX, CHALLENGE_KEY_PREFIX));
                     // Add small delay to ensure the key has fully expired
                     setTimeout(async () => {
-                        await this.handleWarningExpiry(key);
+                        await this.handleWarningExpiry(message);
                     }, 100);
                 }
-            });
-            
-        } catch (error) {
-            console.error('Error setting up Redis expiry listener');
-            logError('Error setting up Redis expiry listener', error);
-        }
+            }
+        });
     }
     
     // Key format: `nvd:challenge:${player1Rank}-${player2Rank}` (sorted order like SvS-Bot-2)
@@ -236,6 +196,50 @@ class RedisClient {
         }
     }
     
+    // Update existing challenge with new date and reset TTL (used for extending challenges)
+    async updateChallenge(player1Rank, player2Rank, newChallengeDate) {
+        const key = this.generateChallengeKey(player1Rank, player2Rank);
+        // Reset to 3 days from now
+        const expiryTime = 3 * 24 * 60 * 60;
+        // Warning time: 24 hours before expiration, but minimum 300 seconds (5 minutes)
+        const warningTime = Math.max(300, expiryTime - (24 * 60 * 60));
+        
+        try {
+            const challengeDataStr = await this.client.get(key);
+            
+            if (!challengeDataStr) {
+                console.error(`Challenge not found for ${key}`);
+                return false;
+            }
+            
+            const challengeData = JSON.parse(challengeDataStr);
+            
+            // Update challenge date and reset expiration
+            challengeData.challengeDate = newChallengeDate;
+            challengeData.startTime = Date.now();
+            challengeData.expiryTime = Date.now() + (expiryTime * 1000);
+            
+            // Remove old warning key if it exists
+            const oldWarningKey = `${WARNING_KEY_PREFIX}${key.substring(13)}`;
+            await this.client.del(oldWarningKey);
+            
+            // Set main challenge with updated data
+            await this.client.setex(key, expiryTime, JSON.stringify(challengeData));
+            console.log(`Updated challenge for ${key} with new expiry ${expiryTime}s`);
+            
+            // Set a new warning key
+            const warningKey = `${WARNING_KEY_PREFIX}${key.substring(13)}`;
+            await this.client.setex(warningKey, warningTime, key);
+            console.log(`Reset warning for ${warningKey} with expiry ${warningTime}s`);
+            
+            return true;
+        } catch (error) {
+            console.error('Error updating challenge');
+            logError('Error updating challenge', error);
+            return false;
+        }
+    }
+    
     // Remove challenge from Redis (used when a challenge is completed or manually cancelled)
     async removeChallenge(player1Rank, player2Rank) {
         const key = this.generateChallengeKey(player1Rank, player2Rank);
@@ -320,6 +324,13 @@ class RedisClient {
             }
             
             console.log(`Sending warning for active challenge: ${challengerRank} vs ${targetRank} (TTL: ${challengeTTL}s)`);
+            
+            // Check if warning already sent using lock mechanism
+            const canSendWarning = await this.markChallengeWarningAsSent(challengerRank, targetRank);
+            if (!canSendWarning) {
+                console.log('Skipping warning - already sent recently');
+                return;
+            }
             
             // Send warning message (direct mention, not embed)
             await channel.send(
@@ -667,6 +678,32 @@ class RedisClient {
         }
     }
 
+    // Create or check a warning lock to prevent duplicate notifications
+    async markChallengeWarningAsSent(player1Rank, player2Rank) {
+        const key = this.generateChallengeKey(player1Rank, player2Rank);
+        const warningLockKey = `nvd:warning-lock:${key.substring(13)}`;
+        
+        try {
+            // Try to set the lock with NX option (only set if it doesn't exist)
+            // This lock will expire after 60 seconds to prevent any potential deadlock
+            const result = await this.client.set(warningLockKey, '1', 'EX', 60, 'NX');
+            
+            // If result is null, the key already exists (warning already sent)
+            if (result === null) {
+                console.log(`Warning already sent for challenge ${key} (lock exists)`);
+                return false;
+            }
+            
+            console.log(`Set warning lock for ${key}`);
+            return true;
+        } catch (error) {
+            console.error('Error setting warning lock:', error);
+            logError('Error setting warning lock', error);
+            // If there's an error, allow the warning to be sent (fail open)
+            return true;
+        }
+    }
+
     // Debug method to list all active cooldowns
     async listAllCooldowns() {
         try {
@@ -750,6 +787,126 @@ class RedisClient {
             console.error('Error getting player cooldowns');
             logError('Error getting player cooldowns', error);
             return [];
+        }
+    }
+
+    // Update Redis challenge keys when ranks shift due to player removal
+    async updateChallengeKeysForRankShift(removedRank, rankMappings) {
+        try {
+            console.log(`├─ Updating Redis keys for rank shift (removed rank: ${removedRank})`);
+            
+            // Get all current challenge keys
+            const challengeKeys = await this.client.keys(`${CHALLENGE_KEY_PREFIX}*`);
+            const warningKeys = await this.client.keys(`${WARNING_KEY_PREFIX}*`);
+            
+            const updatedChallenges = [];
+            const keysToDelete = [];
+            
+            for (const key of challengeKeys) {
+                try {
+                    // Extract ranks from key
+                    const keyParts = key.replace(CHALLENGE_KEY_PREFIX, '').split('-');
+                    if (keyParts.length !== 2) continue;
+                    
+                    const rank1 = parseInt(keyParts[0]);
+                    const rank2 = parseInt(keyParts[1]);
+                    
+                    // Skip if challenge involves removed player
+                    if (rank1 === removedRank || rank2 === removedRank) {
+                        keysToDelete.push(key);
+                        continue;
+                    }
+                    
+                    // Calculate new ranks (shift up if below removed rank)
+                    const newRank1 = rank1 > removedRank ? rank1 - 1 : rank1;
+                    const newRank2 = rank2 > removedRank ? rank2 - 1 : rank2;
+                    
+                    // Only update if ranks changed
+                    if (newRank1 !== rank1 || newRank2 !== rank2) {
+                        const challengeData = await this.client.get(key);
+                        const ttl = await this.client.ttl(key);
+                        
+                        if (challengeData && ttl > 0) {
+                            const data = JSON.parse(challengeData);
+                            
+                            // Update rank references in data
+                            data.player1.rank = data.player1.rank === rank1 ? newRank1 : data.player1.rank === rank2 ? newRank2 : data.player1.rank;
+                            data.player2.rank = data.player2.rank === rank1 ? newRank1 : data.player2.rank === rank2 ? newRank2 : data.player2.rank;
+                            
+                            updatedChallenges.push({
+                                oldKey: key,
+                                newKey: this.generateChallengeKey(newRank1, newRank2),
+                                data: JSON.stringify(data),
+                                ttl: ttl
+                            });
+                        }
+                        
+                        keysToDelete.push(key);
+                    }
+                } catch (error) {
+                    console.error(`├─ Error processing challenge key ${key}:`, error);
+                }
+            }
+            
+            // Process warning keys similarly
+            for (const warningKey of warningKeys) {
+                try {
+                    const keyParts = warningKey.replace(WARNING_KEY_PREFIX, '').split('-');
+                    if (keyParts.length !== 2) continue;
+                    
+                    const rank1 = parseInt(keyParts[0]);
+                    const rank2 = parseInt(keyParts[1]);
+                    
+                    if (rank1 === removedRank || rank2 === removedRank) {
+                        keysToDelete.push(warningKey);
+                    } else if (rank1 > removedRank || rank2 > removedRank) {
+                        const newRank1 = rank1 > removedRank ? rank1 - 1 : rank1;
+                        const newRank2 = rank2 > removedRank ? rank2 - 1 : rank2;
+                        
+                        const warningTtl = await this.client.ttl(warningKey);
+                        const warningData = await this.client.get(warningKey);
+                        
+                        if (warningTtl > 0 && warningData) {
+                            const newWarningKey = `${WARNING_KEY_PREFIX}${[newRank1, newRank2].sort().join('-')}`;
+                            await this.client.setex(newWarningKey, warningTtl, warningData);
+                            console.log(`├─ Updated warning key: ${warningKey} -> ${newWarningKey}`);
+                        }
+                        
+                        keysToDelete.push(warningKey);
+                    }
+                } catch (error) {
+                    console.error(`├─ Error processing warning key ${warningKey}:`, error);
+                }
+            }
+            
+            // Delete old keys
+            if (keysToDelete.length > 0) {
+                for (const key of keysToDelete) {
+                    await this.client.del(key);
+                }
+                console.log(`├─ Deleted ${keysToDelete.length} old Redis keys`);
+            }
+            
+            // Create new challenge keys
+            for (const challenge of updatedChallenges) {
+                await this.client.setex(challenge.newKey, challenge.ttl, challenge.data);
+                console.log(`├─ Updated challenge key: ${challenge.oldKey} -> ${challenge.newKey}`);
+                
+                // Create corresponding warning key if needed
+                const warningTime = Math.max(300, challenge.ttl - (24 * 60 * 60));
+                if (warningTime > 0) {
+                    const newWarningKey = `${WARNING_KEY_PREFIX}${challenge.newKey.substring(13)}`;
+                    await this.client.setex(newWarningKey, warningTime, challenge.newKey);
+                }
+            }
+            
+            console.log(`├─ Redis rank shift update completed: ${updatedChallenges.length} challenges updated`);
+            return true;
+            
+        } catch (error) {
+            console.error(`├─ Error updating Redis keys for rank shift:`, error);
+            logError('Error updating Redis keys for rank shift', error);
+            return false;
         }
     }
 

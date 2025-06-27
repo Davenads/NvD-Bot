@@ -325,6 +325,17 @@ module.exports = {
       }
       
       console.log('└─ Redis cleanup completed')
+      
+      // Update Redis keys for rank shifts (players below removed rank shift up by 1)
+      console.log('├─ Updating Redis keys for rank shifts...')
+      try {
+        await redisClient.updateChallengeKeysForRankShift(rankToRemove)
+        console.log('├─ Successfully updated Redis keys for rank shifts')
+      } catch (error) {
+        console.error('├─ Error updating Redis keys for rank shifts:', error)
+        // Don't throw - log but continue since Google Sheets updates succeeded
+      }
+      
       // Verify ranks
       const verificationResult = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
