@@ -3,6 +3,7 @@ const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js'
 const { google } = require('googleapis')
 const { logError } = require('../logger')
 const redisClient = require('../redis-client');
+const emojis = require('../utils/emojis');
 
 const sheets = google.sheets({
   version: 'v4',
@@ -283,10 +284,10 @@ module.exports = {
       // CHANGED: Create and send announcement embed with NvD theme (no spec/element)
       const challengeEmbed = new EmbedBuilder()
         .setColor('#8A2BE2') // CHANGED: Updated color for NvD theme
-        .setTitle(':bone: ⚔️ :bear: New Challenge Initiated!')
+        .setTitle(`${emojis.necro} ⚔️ ${emojis.druid} New Challenge Initiated!`)
         .addFields(
           {
-            name: ':bone: Challenger',
+            name: `${emojis.necro} Challenger`,
             value: `Rank #${challengerRank} (<@${challengerRow[5]}>)`, // CHANGED: Discord ID is now column F (index 5)
             inline: true
           },
@@ -296,7 +297,7 @@ module.exports = {
             inline: true
           },
           {
-            name: ':bear: Challenged',
+            name: `${emojis.druid} Challenged`,
             value: `Rank #${targetRank} (<@${targetRow[5]}>)`, // CHANGED: Discord ID is now column F (index 5)
             inline: true
           }

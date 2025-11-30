@@ -5,6 +5,7 @@ const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js'
 const { google } = require('googleapis')
 const { logError } = require('../logger')
 const redisClient = require('../redis-client');
+const emojis = require('../utils/emojis');
 // Initialize the Google Sheets API client
 const sheets = google.sheets({
   version: 'v4',
@@ -307,12 +308,12 @@ module.exports = {
       // CHANGED: Updated embed with NvD theme and no spec/element
       const resultEmbed = new EmbedBuilder()
         .setColor('#8A2BE2') // CHANGED: Updated color for NvD theme
-        .setTitle(':bone: ⚔️ Challenge Result Announced! ⚔️ :bear:')
+        .setTitle(`${emojis.necro} ⚔️ Challenge Result Announced! ⚔️ ${emojis.druid}`)
         .setDescription(`**${winnerDetails.discordName}** ${victoryMessage}`)
         .addFields(
           {
             name: `${
-              isDefense ? ':bone: 🛡️ Defender' : ':bone: 🏆 Victor'
+              isDefense ? `${emojis.necro} 🛡️ Defender` : `${emojis.necro} 🏆 Victor`
             } (Rank #${winnerRank})`,
             value: `**${winnerDetails.discordName}**
 <@${winnerDiscordId}>`,
@@ -325,7 +326,7 @@ module.exports = {
           },
           {
             name: `${
-              isDefense ? ':bear: ⚔️ Challenger' : ':bear: 📉 Defeated'
+              isDefense ? `${emojis.druid} ⚔️ Challenger` : `${emojis.druid} 📉 Defeated`
             } (Rank #${loserRank})`,
             value: `**${loserDetails.discordName}**
 <@${loserDiscordId}>`,

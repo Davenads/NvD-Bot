@@ -3,6 +3,7 @@ const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, Butt
 const { google } = require('googleapis');
 // Import the Google auth helper
 const { getGoogleAuth } = require('../fixGoogleAuth');
+const emojis = require('../utils/emojis');
 
 // Initialize Google Sheets API client
 const sheets = google.sheets({
@@ -48,7 +49,7 @@ module.exports = {
             const embeds = [];
             let currentEmbed = new EmbedBuilder()
                 .setColor('#8A2BE2') // CHANGED: Updated color for NvD theme
-                .setTitle(':bone: NvD Ladder Leaderboard :bear:') // CHANGED: Updated title with class emojis
+                .setTitle(`${emojis.necro} NvD Ladder Leaderboard ${emojis.druid}`) // CHANGED: Updated title with class emojis
                 .setDescription('Current standings in the NvD Ladder.') // CHANGED: Updated description
                 .setTimestamp()
                 .setFooter({ text: 'NvD Bot Leaderboard', iconURL: interaction.client.user.displayAvatarURL() }); // CHANGED: Updated footer
@@ -75,7 +76,7 @@ module.exports = {
                     embeds.push(currentEmbed);
                     currentEmbed = new EmbedBuilder()
                         .setColor('#8A2BE2') // CHANGED: Updated color for NvD theme
-                        .setTitle('🏆 :bone: NvD Ladder Leaderboard (continued) :bear: 🏆') // CHANGED: Updated title with class emojis
+                        .setTitle(`🏆 ${emojis.necro} NvD Ladder Leaderboard (continued) ${emojis.druid} 🏆`) // CHANGED: Updated title with class emojis
                         .setTimestamp()
                         .setFooter({ text: 'NvD Bot Leaderboard', iconURL: interaction.client.user.displayAvatarURL() }); // CHANGED: Updated footer
                 }
