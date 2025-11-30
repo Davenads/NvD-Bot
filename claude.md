@@ -2,6 +2,31 @@
 
 This document provides a comprehensive overview of the NvD Bot codebase structure, architecture, and key components to serve as a reference when working with Claude Code.
 
+## Development Practices
+
+### Git Commit Messages
+
+When creating git commits for this project:
+- Keep messages concise (under 72 characters preferred)
+- Use present-tense imperative verbs (Add, Fix, Update, Remove, Implement, Refactor, etc.)
+- **NEVER include author credits, attribution, or "Generated with Claude Code" notation**
+- Focus on WHAT changed, not WHY
+- No emojis unless explicitly requested
+- No superlative or praise language ("awesome", "great", "amazing", etc.)
+- Be direct and factual
+
+**Good Examples:**
+- "Update signup embed to direct users to register command"
+- "Fix 400 error in form submission handler"
+- "Remove emojis from match type buttons"
+- "Add cooldown check before challenge creation"
+
+**Bad Examples:**
+- ❌ "Update signup embed with register command and ladder info 🤖 Generated with Claude Code" (has author notation)
+- ❌ "Add awesome new feature" (superlative language)
+- ❌ "Fixed the really annoying bug that was causing issues" (verbose, not concise)
+- ❌ "Update: Made some changes to the code" (vague)
+
 ## Project Structure Overview
 
 ```
