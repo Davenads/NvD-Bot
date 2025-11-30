@@ -133,9 +133,207 @@ async function syncExistingChallenges() {
         // Don't crash the bot if sync fails
     }
 }
-// Event listener for handling interactions (slash commands and autocomplete)
+
+// Function to handle registration button clicks
+async function handleRegistrationButton(interaction) {
+    const timestamp = new Date().toISOString();
+    console.log(`\n[${timestamp}] Registration Button Clicked`);
+    console.log(`├─ User: ${interaction.user.tag} (${interaction.user.id})`);
+    console.log(`├─ Channel: #${interaction.channel.name} (${interaction.channel.id})`);
+
+    await interaction.deferReply({ ephemeral: true });
+
+    const discUser = interaction.user.username;
+    const discUserId = interaction.user.id;
+
+    try {
+        const { google } = require('googleapis');
+        const { getGoogleAuth } = require('./fixGoogleAuth');
+
+        const sheets = google.sheets({
+            version: 'v4',
+            auth: getGoogleAuth()
+        });
+
+        const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
+        const sheetId = 0;
+
+        console.log(`├─ Fetching current ladder data...`);
+        const result = await sheets.spreadsheets.values.get({
+            spreadsheetId: SPREADSHEET_ID,
+            range: `NvD Ladder!A2:H`,
+        });
+
+        const rows = result.data.values || [];
+        console.log(`├─ Current ladder entries: ${rows.length}`);
+
+        // Check if Discord user already exists
+        const existingPlayer = rows.find(row =>
+            (row[1] && row[1] === discUser) || (row[5] && row[5] === discUserId)
+        );
+
+        if (existingPlayer) {
+            console.log(`└─ Error: User already exists on ladder`);
+            return interaction.editReply({
+                content: 'You already have a character on the NvD ladder.',
+                ephemeral: true
+            });
+        }
+
+        // Find the first empty row
+        let emptyRowIndex = rows.length + 2;
+        for (let i = 0; i < rows.length; i++) {
+            if (!rows[i] || !rows[i][1]) {
+                emptyRowIndex = i + 2;
+                break;
+            }
+        }
+
+        console.log(`├─ Registration position: Row ${emptyRowIndex} (Rank #${emptyRowIndex - 1})`);
+
+        // New player row
+        const newPlayerRow = [
+            emptyRowIndex - 1,
+            discUser,
+            'Available',
+            '',
+            '',
+            discUserId,
+            '',
+            ''
+        ];
+
+        console.log(`├─ Preparing sheet updates...`);
+
+        // Create requests for copying formatting
+        const copyRowIndex = 1;
+        const requests = [
+            {
+                copyPaste: {
+                    source: {
+                        sheetId: sheetId,
+                        startRowIndex: copyRowIndex,
+                        endRowIndex: copyRowIndex + 1,
+                        startColumnIndex: 1,
+                        endColumnIndex: 3
+                    },
+                    destination: {
+                        sheetId: sheetId,
+                        startRowIndex: emptyRowIndex - 1,
+                        endRowIndex: emptyRowIndex,
+                        startColumnIndex: 1,
+                        endColumnIndex: 3
+                    },
+                    pasteType: 'PASTE_FORMAT'
+                }
+            },
+            {
+                copyPaste: {
+                    source: {
+                        sheetId: sheetId,
+                        startRowIndex: copyRowIndex,
+                        endRowIndex: copyRowIndex + 1,
+                        startColumnIndex: 2,
+                        endColumnIndex: 3
+                    },
+                    destination: {
+                        sheetId: sheetId,
+                        startRowIndex: emptyRowIndex - 1,
+                        endRowIndex: emptyRowIndex,
+                        startColumnIndex: 2,
+                        endColumnIndex: 3
+                    },
+                    pasteType: 'PASTE_DATA_VALIDATION'
+                }
+            },
+            {
+                updateCells: {
+                    range: {
+                        sheetId: sheetId,
+                        startRowIndex: emptyRowIndex - 1,
+                        endRowIndex: emptyRowIndex,
+                        startColumnIndex: 1,
+                        endColumnIndex: 2
+                    },
+                    rows: [{
+                        values: [{
+                            userEnteredFormat: {
+                                textFormat: {
+                                    bold: true
+                                }
+                            }
+                        }]
+                    }],
+                    fields: 'userEnteredFormat.textFormat.bold'
+                }
+            }
+        ];
+
+        console.log(`├─ Executing batch update for formatting...`);
+        await sheets.spreadsheets.batchUpdate({
+            spreadsheetId: SPREADSHEET_ID,
+            resource: { requests }
+        });
+
+        console.log(`├─ Adding new player row...`);
+        await sheets.spreadsheets.values.update({
+            spreadsheetId: SPREADSHEET_ID,
+            range: `NvD Ladder!A${emptyRowIndex}:H`,
+            valueInputOption: 'RAW',
+            resource: {
+                values: [newPlayerRow]
+            }
+        });
+
+        console.log(`├─ Setting status to 'Available'...`);
+        await sheets.spreadsheets.values.update({
+            spreadsheetId: SPREADSHEET_ID,
+            range: `NvD Ladder!C${emptyRowIndex}`,
+            valueInputOption: 'RAW',
+            resource: {
+                values: [['Available']]
+            }
+        });
+
+        console.log(`├─ Creating response embed...`);
+        const { EmbedBuilder } = require('discord.js');
+        const embed = new EmbedBuilder()
+            .setColor('#8A2BE2')
+            .setTitle('✨ New Player Registered to NvD Ladder! ✨')
+            .addFields(
+                { name: '👤 **Discord User**', value: `**${discUser}** (<@${discUserId}>)`, inline: false },
+                { name: '🏆 **Rank**', value: `**#${emptyRowIndex - 1}**`, inline: false }
+            )
+            .setFooter({ text: 'Successfully added to the NvD Ladder!', iconURL: interaction.client.user.displayAvatarURL() })
+            .setTimestamp();
+
+        console.log(`└─ Registration completed successfully`);
+
+        // Reply with the embed
+        await interaction.editReply({ embeds: [embed] });
+
+        // Also send a public announcement in the channel
+        await interaction.channel.send({ embeds: [embed] });
+
+    } catch (error) {
+        console.error(`└─ Error registering player via button`);
+        logError('Registration button error', error);
+        return interaction.editReply({
+            content: 'An error occurred while registering. Please try again later.',
+            ephemeral: true
+        });
+    }
+}
+
+// Event listener for handling interactions (slash commands, autocomplete, and buttons)
 client.on('interactionCreate', async interaction => {
-    if (interaction.isCommand()) {
+    if (interaction.isButton()) {
+        // Button Interaction Handling
+        if (interaction.customId === 'nvd-register-button') {
+            await handleRegistrationButton(interaction);
+            return;
+        }
+    } else if (interaction.isCommand()) {
         // Slash Command Handling
         // Retrieve the command from the client's command collection
         const command = client.commands.get(interaction.commandName);

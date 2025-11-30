@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -25,7 +25,7 @@ module.exports = {
             .addFields(
                 {
                     name: '📋 How to Register:',
-                    value: 'Use the `/nvd-register` command to register yourself to the ladder!\n\nYou can optionally add notes when registering.'
+                    value: 'Click the **Register** button below to instantly join the ladder, or use the `/nvd-register` command if you want to add optional notes.'
                 },
                 {
                     name: '📊 View the Ladder:',
@@ -50,6 +50,16 @@ module.exports = {
             })
             .setTimestamp();
 
-        await interaction.reply({ embeds: [embed] });
+        // Create the register button
+        const registerButton = new ButtonBuilder()
+            .setCustomId('nvd-register-button')
+            .setLabel('Register')
+            .setStyle(ButtonStyle.Success)
+            .setEmoji('📝');
+
+        const row = new ActionRowBuilder()
+            .addComponents(registerButton);
+
+        await interaction.reply({ embeds: [embed], components: [row] });
     },
 };
