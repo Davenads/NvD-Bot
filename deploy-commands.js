@@ -3,6 +3,9 @@ const { REST, Routes } = require('discord.js');
 
 require('dotenv').config();
 
+// Skip Redis connection during command deployment to avoid connection spam
+process.env.SKIP_REDIS = 'true';
+
 const commands = [];
 const commandFiles = fs.readdirSync('./commands').filter(file => file.endsWith('.js'));
 

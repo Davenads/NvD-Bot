@@ -47,6 +47,14 @@ class RedisClient extends EventEmitter {
     constructor() {
         super();
 
+        // Skip Redis connection if SKIP_REDIS flag is set (e.g., during command deployment)
+        if (process.env.SKIP_REDIS === 'true') {
+            console.log('Skipping Redis connection (SKIP_REDIS=true)');
+            this.client = null;
+            this.subClient = null;
+            return;
+        }
+
         // Configure Redis clients based on environment
         const redisConfig = this.getRedisConfig();
 
