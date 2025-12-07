@@ -3,6 +3,7 @@ require('dotenv').config(); // Load environment variables from .env file
 require('./fixGoogleAuth');
 const { Client, GatewayIntentBits, Collection, MessageFlags } = require('discord.js');
 const { logError } = require('./logger');
+const { logCommandExecution } = require('./utils/commandLogger');
 const fs = require('fs');
 const path = require('path');
 // Initialize the Discord client with the necessary intents
@@ -349,14 +350,26 @@ client.on('interactionCreate', async interaction => {
                 });
             }
         }
+        // Track command execution time
+        const startTime = performance.now();
+        let commandError = null;
+
         try {
             // Execute the command
             await command.execute(interaction);
         } catch (error) {
+            commandError = error;
             console.error('Error executing command');
             logError('Command execution error', error);
             // Respond with an error message if command execution fails
             await interaction.reply({ content: 'There was an error while executing this command!', flags: MessageFlags.Ephemeral });
+        } finally {
+            // Calculate duration and log command execution
+            const endTime = performance.now();
+            const duration = endTime - startTime;
+
+            // Log the command execution (success or failure)
+            await logCommandExecution(interaction, duration, commandError);
         }
     } else if (interaction.isAutocomplete()) {
         // Autocomplete Handling
