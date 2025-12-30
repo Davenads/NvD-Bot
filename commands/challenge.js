@@ -197,7 +197,7 @@ module.exports = {
 
       // Check for existing challenge between these players
       console.log('├─ Checking for existing challenge in Redis...')
-      const existingChallenge = await redisClient.checkChallenge(challengerRank, targetRank);
+      const existingChallenge = await redisClient.checkChallenge(player1.discordId, player2.discordId);
       
       if (existingChallenge.active) {
         const hoursRemaining = Math.floor(existingChallenge.remainingTime / 3600);

@@ -113,11 +113,11 @@ class RedisClient extends EventEmitter {
         });
     }
     
-    // Key format: `nvd:challenge:${player1Rank}-${player2Rank}` (sorted order like SvS-Bot-2)
-    generateChallengeKey(player1Rank, player2Rank) {
-        const pair = [String(player1Rank), String(player2Rank)].sort();
+    // Key format: `nvd:challenge:${discordId1}-${discordId2}` (sorted order by Discord ID)
+    generateChallengeKey(player1DiscordId, player2DiscordId) {
+        const pair = [String(player1DiscordId), String(player2DiscordId)].sort();
         const key = `${CHALLENGE_KEY_PREFIX}${pair[0]}-${pair[1]}`;
-        console.log(`Generated challenge key: ${key} (ranks: ${player1Rank} vs ${player2Rank})`);
+        console.log(`Generated challenge key: ${key} (Discord IDs: ${player1DiscordId} vs ${player2DiscordId})`);
         return key;
     }
 
@@ -155,9 +155,9 @@ class RedisClient extends EventEmitter {
         }
     }
 
-    // Store challenge in Redis - matches SvS-Bot-2 pattern with nvd namespace
+    // Store challenge in Redis - uses Discord IDs for stable keys
     async setChallenge(player1, player2, challengeDate, customTTL = null) {
-        const key = this.generateChallengeKey(player1.rank, player2.rank);
+        const key = this.generateChallengeKey(player1.discordId, player2.discordId);
         
         let expiryTime;
         if (customTTL) {
@@ -207,8 +207,8 @@ class RedisClient extends EventEmitter {
     }
     
     // Update existing challenge with new date and reset TTL (used for extending challenges)
-    async updateChallenge(player1Rank, player2Rank, newChallengeDate) {
-        const key = this.generateChallengeKey(player1Rank, player2Rank);
+    async updateChallenge(player1DiscordId, player2DiscordId, newChallengeDate) {
+        const key = this.generateChallengeKey(player1DiscordId, player2DiscordId);
         // Reset to 3 days from now
         const expiryTime = 3 * 24 * 60 * 60;
         // Warning time: 24 hours before expiration, but minimum 300 seconds (5 minutes)
@@ -251,12 +251,12 @@ class RedisClient extends EventEmitter {
     }
     
     // Remove challenge from Redis (used when a challenge is completed or manually cancelled)
-    async removeChallenge(player1Rank, player2Rank) {
-        const key = this.generateChallengeKey(player1Rank, player2Rank);
+    async removeChallenge(player1DiscordId, player2DiscordId) {
+        const key = this.generateChallengeKey(player1DiscordId, player2DiscordId);
         const warningKey = `${WARNING_KEY_PREFIX}${key.substring(13)}`; // Remove 'nvd:challenge:' prefix
-        
+
         try {
-            console.log(`Attempting to remove challenge keys for ${player1Rank} vs ${player2Rank}`);
+            console.log(`Attempting to remove challenge keys for Discord IDs ${player1DiscordId} vs ${player2DiscordId}`);
             console.log(`  Challenge key: ${key}`);
             console.log(`  Warning key: ${warningKey}`);
             
@@ -287,56 +287,56 @@ class RedisClient extends EventEmitter {
     async handleWarningExpiry(key) {
         try {
             console.log(`Processing warning expiry for key: ${key}`);
-            
-            // Extract ranks from the key (format: nvd:challenge-warning:rank1-rank2)
+
+            // Extract Discord IDs from the key (format: nvd:challenge-warning:discordId1-discordId2)
             const keyParts = key.replace(WARNING_KEY_PREFIX, '').split('-');
             if (keyParts.length !== 2) {
                 console.log(`Skipping malformed warning key: ${key}`);
                 return;
             }
-            
-            const challengerRank = keyParts[0];
-            const targetRank = keyParts[1];
-            
+
+            const discordId1 = keyParts[0];
+            const discordId2 = keyParts[1];
+
             // Log the warning expiry
-            console.log(`Challenge warning triggered for ${challengerRank} vs ${targetRank}`);
-            
+            console.log(`Challenge warning triggered for Discord IDs ${discordId1} vs ${discordId2}`);
+
             // Get discord client (needs to be passed in from index.js)
             const discordClient = global.discordClient;
             if (!discordClient) {
                 console.error('Discord client not available for sending warning');
                 return;
             }
-            
+
             // Get the challenge data from the main challenge key
-            const challengeKey = this.generateChallengeKey(challengerRank, targetRank);
+            const challengeKey = this.generateChallengeKey(discordId1, discordId2);
             const challengeData = await this.client.get(challengeKey);
-            
+
             if (!challengeData) {
-                console.log(`Challenge no longer exists for ${challengerRank} vs ${targetRank}, skipping warning`);
+                console.log(`Challenge no longer exists for Discord IDs ${discordId1} vs ${discordId2}, skipping warning`);
                 return;
             }
-            
+
             const challenge = JSON.parse(challengeData);
-            
+
             // Double-check that the challenge key still exists with TTL
             const challengeTTL = await this.client.ttl(challengeKey);
             if (challengeTTL <= 0) {
                 console.log(`Challenge key ${challengeKey} has no TTL or has expired, skipping warning`);
                 return;
             }
-            
+
             // Find the notification channel
             const channel = discordClient.channels.cache.get(NOTIFICATION_CHANNEL_ID);
             if (!channel) {
                 console.error('Could not find notification channel');
                 return;
             }
-            
-            console.log(`Sending warning for active challenge: ${challengerRank} vs ${targetRank} (TTL: ${challengeTTL}s)`);
-            
+
+            console.log(`Sending warning for active challenge: ${challenge.player1.name} vs ${challenge.player2.name} (TTL: ${challengeTTL}s)`);
+
             // Check if warning already sent using lock mechanism
-            const canSendWarning = await this.markChallengeWarningAsSent(challengerRank, targetRank);
+            const canSendWarning = await this.markChallengeWarningAsSent(discordId1, discordId2);
             if (!canSendWarning) {
                 console.log('Skipping warning - already sent recently');
                 return;
@@ -369,19 +369,18 @@ class RedisClient extends EventEmitter {
                 return;
             }
             
-            // Extract ranks from the key (format: nvd:challenge:rank1-rank2)
+            // Extract Discord IDs from the key (format: nvd:challenge:discordId1-discordId2)
             const keyParts = key.replace(CHALLENGE_KEY_PREFIX, '').split('-');
             if (keyParts.length !== 2) {
                 console.log(`Skipping malformed challenge key: ${key}`);
                 return;
             }
-            
-            const challengerRank = keyParts[0];
-            const targetRank = keyParts[1];
-            const challengeKey = `${challengerRank}-${targetRank}`;
-            
+
+            const discordId1 = keyParts[0];
+            const discordId2 = keyParts[1];
+
             try {
-                console.log(`🔒 Auto-nulling expired challenge: ${challengerRank} vs ${targetRank}`);
+                console.log(`🔒 Auto-nulling expired challenge for Discord IDs: ${discordId1} vs ${discordId2}`);
                 
                 // Initialize the Google Sheets API client
                 const sheets = google.sheets({
@@ -421,9 +420,9 @@ class RedisClient extends EventEmitter {
                     return;
                 }
                 
-                // Find the rows with matching ranks
-                challengerRowIndex = rows.findIndex(row => parseInt(row[0]) === parseInt(challengerRank));
-                targetRowIndex = rows.findIndex(row => parseInt(row[0]) === parseInt(targetRank));
+                // Find the rows with matching Discord IDs (column F, index 5)
+                challengerRowIndex = rows.findIndex(row => row[5] === discordId1);
+                targetRowIndex = rows.findIndex(row => row[5] === discordId2);
                 
                 // Add 2 to row indices because our range starts from A2
                 if (challengerRowIndex !== -1) challengerRowIndex += 2;
@@ -507,9 +506,9 @@ class RedisClient extends EventEmitter {
                 });
                 
                 console.log('Successfully reset challenge status in spreadsheet');
-                
-                // Simple cleanup like SvS-Bot-2 (no complex locking)
-                await this.removeChallenge(challengerRank, targetRank);
+
+                // Simple cleanup - use Discord IDs from challenge data
+                await this.removeChallenge(challenge.player1.discordId, challenge.player2.discordId);
                 console.log('✅ Challenge cleanup completed successfully');
                 
                 // Send notification embed
@@ -652,9 +651,9 @@ class RedisClient extends EventEmitter {
         }
     }
 
-    // Check if a challenge exists between two players - matches SvS-Bot-2
-    async checkChallenge(player1Rank, player2Rank) {
-        const key = this.generateChallengeKey(player1Rank, player2Rank);
+    // Check if a challenge exists between two players - uses Discord IDs
+    async checkChallenge(player1DiscordId, player2DiscordId) {
+        const key = this.generateChallengeKey(player1DiscordId, player2DiscordId);
         
         try {
             const challengeData = await this.client.get(key);
@@ -689,8 +688,8 @@ class RedisClient extends EventEmitter {
     }
 
     // Create or check a warning lock to prevent duplicate notifications
-    async markChallengeWarningAsSent(player1Rank, player2Rank) {
-        const key = this.generateChallengeKey(player1Rank, player2Rank);
+    async markChallengeWarningAsSent(player1DiscordId, player2DiscordId) {
+        const key = this.generateChallengeKey(player1DiscordId, player2DiscordId);
         const warningLockKey = `nvd:warning-lock:${key.substring(13)}`;
         
         try {
@@ -800,117 +799,75 @@ class RedisClient extends EventEmitter {
         }
     }
 
-    // Update Redis challenge keys when ranks shift due to player removal
-    async updateChallengeKeysForRankShift(removedRank, rankMappings) {
+    // Clean up Redis challenges involving a removed player (Discord ID-based)
+    async updateChallengeKeysForRankShift(removedRank, removedDiscordId) {
         try {
-            console.log(`├─ Updating Redis keys for rank shift (removed rank: ${removedRank})`);
+            console.log(`├─ Cleaning up Redis challenges for removed player (rank: ${removedRank}, Discord ID: ${removedDiscordId})`);
             
+            // Since keys use Discord IDs (not ranks), we only need to remove challenges involving the removed player
+            // No rank shifting needed - Discord IDs are stable
+
+            if (!removedDiscordId) {
+                console.log(`├─ No Discord ID provided for removed player, skipping Redis cleanup`);
+                return true;
+            }
+
             // Get all current challenge keys
             const challengeKeys = await this.client.keys(`${CHALLENGE_KEY_PREFIX}*`);
             const warningKeys = await this.client.keys(`${WARNING_KEY_PREFIX}*`);
-            
-            const updatedChallenges = [];
+
             const keysToDelete = [];
-            
+            let deletedCount = 0;
+
+            // Find challenges involving the removed player
             for (const key of challengeKeys) {
                 try {
-                    // Extract ranks from key
                     const keyParts = key.replace(CHALLENGE_KEY_PREFIX, '').split('-');
                     if (keyParts.length !== 2) continue;
-                    
-                    const rank1 = parseInt(keyParts[0]);
-                    const rank2 = parseInt(keyParts[1]);
-                    
-                    // Skip if challenge involves removed player
-                    if (rank1 === removedRank || rank2 === removedRank) {
+
+                    const discordId1 = keyParts[0];
+                    const discordId2 = keyParts[1];
+
+                    // Delete if challenge involves removed player
+                    if (discordId1 === removedDiscordId || discordId2 === removedDiscordId) {
                         keysToDelete.push(key);
-                        continue;
-                    }
-                    
-                    // Calculate new ranks (shift up if below removed rank)
-                    const newRank1 = rank1 > removedRank ? rank1 - 1 : rank1;
-                    const newRank2 = rank2 > removedRank ? rank2 - 1 : rank2;
-                    
-                    // Only update if ranks changed
-                    if (newRank1 !== rank1 || newRank2 !== rank2) {
-                        const challengeData = await this.client.get(key);
-                        const ttl = await this.client.ttl(key);
-                        
-                        if (challengeData && ttl > 0) {
-                            const data = JSON.parse(challengeData);
-                            
-                            // Update rank references in data
-                            data.player1.rank = data.player1.rank === rank1 ? newRank1 : data.player1.rank === rank2 ? newRank2 : data.player1.rank;
-                            data.player2.rank = data.player2.rank === rank1 ? newRank1 : data.player2.rank === rank2 ? newRank2 : data.player2.rank;
-                            
-                            updatedChallenges.push({
-                                oldKey: key,
-                                newKey: this.generateChallengeKey(newRank1, newRank2),
-                                data: JSON.stringify(data),
-                                ttl: ttl
-                            });
-                        }
-                        
-                        keysToDelete.push(key);
+                        deletedCount++;
+                        console.log(`├─ Marking challenge for deletion: ${key}`);
                     }
                 } catch (error) {
                     console.error(`├─ Error processing challenge key ${key}:`, error);
                 }
             }
-            
-            // Process warning keys similarly
+
+            // Find warning keys involving the removed player
             for (const warningKey of warningKeys) {
                 try {
                     const keyParts = warningKey.replace(WARNING_KEY_PREFIX, '').split('-');
                     if (keyParts.length !== 2) continue;
-                    
-                    const rank1 = parseInt(keyParts[0]);
-                    const rank2 = parseInt(keyParts[1]);
-                    
-                    if (rank1 === removedRank || rank2 === removedRank) {
+
+                    const discordId1 = keyParts[0];
+                    const discordId2 = keyParts[1];
+
+                    if (discordId1 === removedDiscordId || discordId2 === removedDiscordId) {
                         keysToDelete.push(warningKey);
-                    } else if (rank1 > removedRank || rank2 > removedRank) {
-                        const newRank1 = rank1 > removedRank ? rank1 - 1 : rank1;
-                        const newRank2 = rank2 > removedRank ? rank2 - 1 : rank2;
-                        
-                        const warningTtl = await this.client.ttl(warningKey);
-                        const warningData = await this.client.get(warningKey);
-                        
-                        if (warningTtl > 0 && warningData) {
-                            const newWarningKey = `${WARNING_KEY_PREFIX}${[newRank1, newRank2].sort().join('-')}`;
-                            await this.client.setex(newWarningKey, warningTtl, warningData);
-                            console.log(`├─ Updated warning key: ${warningKey} -> ${newWarningKey}`);
-                        }
-                        
-                        keysToDelete.push(warningKey);
+                        console.log(`├─ Marking warning for deletion: ${warningKey}`);
                     }
                 } catch (error) {
                     console.error(`├─ Error processing warning key ${warningKey}:`, error);
                 }
             }
-            
-            // Delete old keys
+
+            // Delete all marked keys
             if (keysToDelete.length > 0) {
                 for (const key of keysToDelete) {
                     await this.client.del(key);
                 }
-                console.log(`├─ Deleted ${keysToDelete.length} old Redis keys`);
+                console.log(`├─ Deleted ${keysToDelete.length} Redis keys (${deletedCount} challenges)`);
+            } else {
+                console.log(`├─ No challenges found for removed player`);
             }
-            
-            // Create new challenge keys
-            for (const challenge of updatedChallenges) {
-                await this.client.setex(challenge.newKey, challenge.ttl, challenge.data);
-                console.log(`├─ Updated challenge key: ${challenge.oldKey} -> ${challenge.newKey}`);
-                
-                // Create corresponding warning key if needed
-                const warningTime = Math.max(300, challenge.ttl - (24 * 60 * 60));
-                if (warningTime > 0) {
-                    const newWarningKey = `${WARNING_KEY_PREFIX}${challenge.newKey.substring(13)}`;
-                    await this.client.setex(newWarningKey, warningTime, challenge.newKey);
-                }
-            }
-            
-            console.log(`├─ Redis rank shift update completed: ${updatedChallenges.length} challenges updated`);
+
+            console.log(`├─ Redis cleanup completed for removed player`);
             return true;
             
         } catch (error) {

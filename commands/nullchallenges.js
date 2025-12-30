@@ -218,9 +218,9 @@ module.exports = {
                 
                 for (const challenge of nullifiedChallenges) {
                     try {
-                        await redisClient.removeChallenge(challenge.playerRank, challenge.opponentRank);
+                        await redisClient.removeChallenge(challenge.playerDiscordId, challenge.opponentDiscordId);
                         successfulCleanups++;
-                        console.log(`│  ├─ ✅ Redis cleanup successful for ${challenge.playerRank} vs ${challenge.opponentRank}`);
+                        console.log(`│  ├─ ✅ Redis cleanup successful for ${challenge.player} vs ${challenge.opponent}`);
                     } catch (cleanupError) {
                         failedCleanups.push({
                             challenge: `${challenge.playerRank} vs ${challenge.opponentRank}`,

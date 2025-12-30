@@ -27,6 +27,15 @@ When creating git commits for this project:
 - ❌ "Fixed the really annoying bug that was causing issues" (verbose, not concise)
 - ❌ "Update: Made some changes to the code" (vague)
 
+### Deployment Workflow
+
+This project uses **GitHub auto-deploy to Heroku**:
+- Push to `main` branch on GitHub origin
+- Heroku automatically deploys changes
+- **DO NOT** create or push to a separate heroku remote
+- **DO NOT** use `git push heroku main`
+- Always use: `git push origin main`
+
 ## Project Structure Overview
 
 ```

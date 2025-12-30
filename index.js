@@ -96,8 +96,10 @@ async function syncExistingChallenges() {
             
             processedPairs.add(pairKey);
 
-            // Check if challenge already exists in Redis (use proper sorted key format)
-            const challengeCheck = await redisClient.checkChallenge(rank, opponentRank);
+            // Check if challenge already exists in Redis (use Discord IDs)
+            const playerDiscordId = player[5];
+            const opponentDiscordId = opponent[5];
+            const challengeCheck = await redisClient.checkChallenge(playerDiscordId, opponentDiscordId);
             if (challengeCheck.active) {
                 console.log(`⏭️ Challenge ${rank} vs ${opponentRank} already exists in Redis`);
                 continue;

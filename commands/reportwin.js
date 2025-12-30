@@ -296,9 +296,9 @@ module.exports = {
           loser: player2.discordId
         });
         
-        // Simple Redis cleanup like SvS-Bot-2
-        console.log(`Removing challenge from Redis: ranks ${winnerRank} vs ${loserRank}`);
-        await redisClient.removeChallenge(winnerRank, loserRank);
+        // Simple Redis cleanup - use Discord IDs
+        console.log(`Removing challenge from Redis: ${player1.discordId} vs ${player2.discordId}`);
+        await redisClient.removeChallenge(player1.discordId, player2.discordId);
         console.log('✅ Redis cleanup completed successfully');
       } catch (cooldownError) {
         console.error('Error setting cooldown or performing cleanup:', cooldownError);

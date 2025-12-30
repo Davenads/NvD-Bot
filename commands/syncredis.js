@@ -238,7 +238,7 @@ module.exports = {
 
             for (const pair of challengePairs) {
                 // Check if challenge already exists in Redis
-                const existingChallenge = await redisClient.checkChallenge(pair.player1.rank, pair.player2.rank);
+                const existingChallenge = await redisClient.checkChallenge(pair.player1.discordId, pair.player2.discordId);
 
                 if (existingChallenge.active && !force) {
                     console.log(`├─ SKIP: Challenge ${pair.player1.rank} vs ${pair.player2.rank} already exists in Redis`);

@@ -309,10 +309,14 @@ module.exports = {
       // Clean up Redis data for the removed player if they have an active challenge
       if (playerData[2] === 'Challenge' && playerData[4]) { // Status is column C (index 2), Opp# is column E (index 4)
         const opponentRank = parseInt(playerData[4])
-        console.log(`├─ Removing Redis challenge for ranks ${rankToRemove} and ${opponentRank}`)
-        
+        // Find opponent's Discord ID
+        const opponentRow = rows.find(row => parseInt(row[0]) === opponentRank)
+        const opponentDiscordId = opponentRow ? opponentRow[5] : null
+
+        console.log(`├─ Removing Redis challenge for Discord IDs ${discordId} and ${opponentDiscordId}`)
+
         try {
-          const redisSuccess = await redisClient.removeChallenge(rankToRemove, opponentRank)
+          const redisSuccess = await redisClient.removeChallenge(discordId, opponentDiscordId)
           if (!redisSuccess) {
             console.error(`├─ Redis cleanup failed but continuing with success`)
           } else {
@@ -327,9 +331,9 @@ module.exports = {
       console.log('└─ Redis cleanup completed')
       
       // Update Redis keys for rank shifts (players below removed rank shift up by 1)
-      console.log('├─ Updating Redis keys for rank shifts...')
+      console.log('├─ Cleaning up Redis challenges for removed player...')
       try {
-        await redisClient.updateChallengeKeysForRankShift(rankToRemove)
+        await redisClient.updateChallengeKeysForRankShift(rankToRemove, discordId)
         console.log('├─ Successfully updated Redis keys for rank shifts')
       } catch (error) {
         console.error('├─ Error updating Redis keys for rank shifts:', error)
