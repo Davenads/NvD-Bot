@@ -62,7 +62,9 @@ class RedisClient extends EventEmitter {
         this.client = new Redis(redisConfig);
 
         // Separate subscription client for keyspace notifications
-        this.subClient = new Redis(redisConfig);
+        // Disable ready check since this client will be in subscriber mode
+        const subConfig = { ...redisConfig, enableReadyCheck: false };
+        this.subClient = new Redis(subConfig);
 
         this.client.on('error', (err) => {
             console.error('Redis Client Error:', err);
