@@ -95,10 +95,10 @@ async function syncExistingChallenges() {
             if (!opponent || opponent[4] !== rank) continue; // Verify bidirectional
             
             processedPairs.add(pairKey);
-            
-            // Check if challenge already exists in Redis
-            const existingChallenge = await redisClient.client.get(`nvd:challenge:${rank}:${opponentRank}`);
-            if (existingChallenge) {
+
+            // Check if challenge already exists in Redis (use proper sorted key format)
+            const challengeCheck = await redisClient.checkChallenge(rank, opponentRank);
+            if (challengeCheck.active) {
                 console.log(`⏭️ Challenge ${rank} vs ${opponentRank} already exists in Redis`);
                 continue;
             }
@@ -109,19 +109,18 @@ async function syncExistingChallenges() {
                 discordName: player[1],
                 rank: rank
             };
-            
+
             const target = {
                 discordId: opponent[5],
-                discordName: opponent[1], 
+                discordName: opponent[1],
                 rank: opponentRank
             };
-            
-            await redisClient.setChallenge(challenger, target, client);
-            
-            const challengeKey = `nvd:challenge:${rank}:${opponentRank}`;
-            await redisClient.setPlayerLock(player[5], challengeKey);
-            await redisClient.setPlayerLock(opponent[5], challengeKey);
-            
+
+            // Get challenge date from column D (index 3), or null if not available
+            const challengeDate = player[3] || null;
+
+            await redisClient.setChallenge(challenger, target, challengeDate);
+
             syncedCount++;
             console.log(`✅ Synced challenge: ${player[1]} vs ${opponent[1]}`);
         }
